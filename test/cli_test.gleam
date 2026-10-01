@@ -12,7 +12,7 @@ pub fn esp32_flash_starts_at_the_current_partition_test() {
   let assert Esp32(port:, baud:, offset:, dry_run:) = platform
   assert port == None
   assert baud == None
-  assert offset == "0x250000"
+  assert offset == None
   assert dry_run == False
 }
 
@@ -27,7 +27,7 @@ pub fn esp32_flash_offset_can_be_overridden_test() {
   let assert Ok(Flash(platform: Esp32(offset:, ..), help: False)) =
     cli.parse(["flash", "esp32", "--offset", "0x210000"])
 
-  assert offset == "0x210000"
+  assert offset == Some("0x210000")
 }
 
 pub fn esp32_flash_rejects_a_bad_offset_test() {

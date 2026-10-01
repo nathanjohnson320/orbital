@@ -24,11 +24,15 @@ pub type Command {
   )
 }
 
-/// `offset` is the flash address of `main.avm`. Current AtomVM images, including
-/// Elixir images and Erlang images since the 512KB boot partition, start the
-/// application at `0x250000`.
+/// `offset` is the flash address of `main.avm`. `None` means read that address
+/// from the device's partition table.
 pub type FlashPlatform {
-  Esp32(port: Option(String), baud: Option(Int), offset: String, dry_run: Bool)
+  Esp32(
+    port: Option(String),
+    baud: Option(Int),
+    offset: Option(String),
+    dry_run: Bool,
+  )
   Pico(port: String)
 }
 
@@ -100,7 +104,7 @@ pub fn parse(args: List(String)) -> Result(Command, Error) {
             platform: Esp32(
               port: None,
               baud: None,
-              offset: default_offset,
+              offset: None,
               dry_run: False,
             ),
             help: True,
@@ -327,10 +331,6 @@ fn monitor_flags() -> ValidatedFlagSpecs {
   monitor_flags
 }
 
-/// Current AtomVM images start `main.avm` here: the boot partition is 512KB,
-/// so the application slot is `0x250000` rather than the old `0x210000`.
-pub const default_offset = "0x250000"
-
 const default_monitor_baud = "115200"
 
 const default_monitor_timeout = "10"
@@ -384,19 +384,19 @@ fn optional_int_flag(
 fn offset_flag(
   flags: List(hoist.Flag),
   state: ParsingState,
-  continue: fn(String) -> Result(a, Error),
+  continue: fn(Option(String)) -> Result(a, Error),
 ) -> Result(a, Error) {
   case find_flag_value(flags, "offset") {
-    Error(_) -> continue(default_offset)
+    Error(_) -> continue(None)
     Ok(value) ->
       case is_hex_address(value) {
-        True -> continue(value)
+        True -> continue(Some(value))
         False ->
           Error(InvalidFlagValue(
             state:,
             flag: "offset",
             value:,
-            expected: "a hex address like 0x250000",
+            expected: "a hex address like 0x2b8000",
           ))
       }
   }
@@ -510,10 +510,9 @@ pub fn flash_help_text(description: Bool) -> Document {
       "only show the command used to flash the device",
     ),
     doc.line,
-    flag_line_with_default(
+    flag_line(
       "    --offset       <HEX>    ",
-      "flash address of the main.avm partition",
-      default_offset,
+      "flash address. Read from the device's main.avm partition when omitted",
     ),
     doc.lines(2),
     command_line("  pico   ", ""),
