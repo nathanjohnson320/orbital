@@ -97,12 +97,19 @@ fn flash(platform: cli.FlashPlatform) -> Nil {
   }
 }
 
-fn flash_esp32_dry_run(port: String, baud: Option(Int), offset: String) -> Nil {
+fn flash_esp32_dry_run(
+  port: Option(String),
+  baud: Option(Int),
+  offset: String,
+) -> Nil {
   let baud = option.unwrap(baud, default_baud) |> int.to_string
   let command =
     [
       "  esptool --chip auto \\",
-      "    --port '" <> port <> "' \\",
+      case port {
+        Some(port) -> "    --port '" <> port <> "' \\"
+        None -> ""
+      },
       "    --baud " <> baud <> " \\",
       "    --before default-reset --after hard-reset write-flash -u \\",
       "    --flash-mode keep --flash-freq keep --flash-size detect "
@@ -110,6 +117,7 @@ fn flash_esp32_dry_run(port: String, baud: Option(Int), offset: String) -> Nil {
         <> " \\",
       "    <AVM_FILE>",
     ]
+    |> list.filter(keeping: fn(line) { line != "" })
     |> string.join(with: "\n")
 
   io.println("To flash the device I would run this command:\n\n" <> command)
@@ -166,7 +174,7 @@ fn list(input_file: Option(String)) -> Nil {
 }
 
 fn do_flash_esp32(
-  port: String,
+  port: Option(String),
   baud: Option(Int),
   offset: String,
 ) -> Result(Nil, Error) {
@@ -552,22 +560,29 @@ fn monitor_serial(
 fn esp_flash_to_device(
   esptool: ExecutablePath,
   output_path: String,
-  port: String,
+  port: Option(String),
   baud: Option(Int),
   offset: String,
 ) -> Result(Nil, Error) {
   let baud = option.unwrap(baud, default_baud) |> int.to_string
+  let port_arguments = case port {
+    Some(port) -> ["--port", port]
+    None -> []
+  }
   let outcome =
-    executable.run(esptool, ".", [
-      "--chip", "auto", "--port", port, "--baud", baud, "--before",
-      "default-reset", "--after", "hard-reset", "write-flash", "-u",
-      "--flash-mode", "keep", "--flash-freq", "keep", "--flash-size", "detect",
-      offset, output_path,
-    ])
+    executable.run(
+      esptool,
+      ".",
+      list.append(port_arguments, [
+        "--chip", "auto", "--baud", baud, "--before", "default-reset", "--after",
+        "hard-reset", "write-flash", "-u", "--flash-mode", "keep",
+        "--flash-freq", "keep", "--flash-size", "detect", offset, output_path,
+      ]),
+    )
 
   case outcome {
     Ok(0) -> Ok(Nil)
-    Ok(2) -> Error(EsptoolCannotOpenPort(port))
+    Ok(2) -> Error(EsptoolCannotOpenPort(option.unwrap(port, "auto")))
     Ok(n) -> Error(CannotFlashWithEsptool(n))
     Error(_) -> Error(CannotSpawnEsptool)
   }

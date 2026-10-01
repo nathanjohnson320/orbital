@@ -4,6 +4,8 @@
 
 - ESP32 applications flash at `0x250000`, where `main.avm` starts on current
   AtomVM images. `--offset` selects a different address.
+- The ESP32 flash command lets esptool auto-detect the serial port when
+  `--port` is omitted.
 - Orbital now has a `monitor` command to show an ESP32 board's console.
 
 ## v1.1.0 - 2026-04-05
