@@ -2,8 +2,9 @@
 
 ## Unreleased
 
-- Orbital now has a `--version` flag to print its version.
-- Orbital now has a `list` command to list the contents of an avm file.
+- ESP32 applications flash at `0x250000`, where `main.avm` starts on current
+  AtomVM images. `--offset` selects a different address.
+- Orbital now has a `monitor` command to show an ESP32 board's console.
 
 ## v1.1.0 - 2026-04-05
 

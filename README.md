@@ -33,7 +33,16 @@ run:
 
 ```sh
 gleam run -m orbital flash esp32 --port /dev/some_device
+gleam run -m orbital monitor
 ```
+
+`flash` writes the application at `0x250000`, the start of `main.avm` on
+current AtomVM images. Pass `--offset 0x210000` for an older image whose boot
+partition is still 256KB.
+
+`monitor` reads the serial console for 10 seconds. `--timeout 0` reads until
+Ctrl+C, pressed twice. The port is chosen when only one USB serial device is
+connected.
 
 And you're good to go! To get an overview of all the available commands and
 options you can run:
