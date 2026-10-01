@@ -36,6 +36,8 @@ gleam run -m orbital flash esp32
 gleam run -m orbital monitor
 ```
 
+`flash` reads the device partition table and writes the application at the
+`main.avm` address. Pass `--offset 0x2b8000` to choose an address yourself.
 Esptool auto-detects the serial port; pass `--port /dev/some_device` when more
 than one board is connected.
 
