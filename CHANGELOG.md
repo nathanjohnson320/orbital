@@ -2,9 +2,11 @@
 
 ## Unreleased
 
+- Orbital now has an `info` command to list connected ESP32 boards and AtomVM
+  install status.
 - Added shared ESP32 device helpers (`orbital/internal/esp32`) backed by
   `priv/esp32.py` for listing devices, selecting a port, erasing flash, and
-  reading/writing flash regions. Follow-up PRs will wire `erase-flash`, `info`,
+  reading/writing flash regions. Follow-up PRs will wire `erase-flash`,
   `expand`, and `install` commands.
 - Extended partition-table parsing with `main.avm` expansion helpers and added
   ESP32 image-header flash-size helpers for upcoming expand support.

@@ -12,6 +12,7 @@ import gleam/result
 import gleam/string
 import gleam_community/ansi
 import orbital/internal/cli
+import orbital/internal/esp32
 import orbital/internal/executable.{type ExecutablePath}
 import orbital/internal/partition
 import orbital/internal/project.{
@@ -61,6 +62,9 @@ pub fn main() -> Nil {
       print_document(cli.monitor_help_text(True))
     Ok(cli.Monitor(port:, baud:, timeout:, reset:, help: False)) ->
       monitor(port, baud, timeout, reset)
+
+    Ok(cli.Info(help: True)) -> print_document(cli.info_help_text(True))
+    Ok(cli.Info(help: False)) -> info()
 
     // Flashing is the more involved step, and changes based on the device.
     Ok(cli.Flash(help: True, ..)) -> print_document(cli.flash_help_text(True))
@@ -156,6 +160,16 @@ fn monitor(
     Error("") -> exit(1)
     Error(reason) -> {
       io.println_error(reason)
+      exit(1)
+    }
+  }
+}
+
+fn info() -> Nil {
+  case esp32.list_devices() {
+    Ok(devices) -> io.println(esp32.format_info_report(devices))
+    Error(error) -> {
+      io.println(error_to_string(Esp32HelperError(error)))
       exit(1)
     }
   }
@@ -344,6 +358,7 @@ type Error {
   EsptoolCannotOpenPort(port: String)
   CannotReadPartitionTable
   CannotFindMainPartition
+  Esp32HelperError(reason: esp32.Error)
 }
 
 fn error_to_string(error: Error) -> String {
@@ -358,6 +373,8 @@ fn error_to_string(error: Error) -> String {
     | CannotFlashPico(_)
     | CannotReadPartitionTable
     | CannotFindMainPartition -> "cannot flash device"
+    Esp32HelperError(esp32.ToolingMissing(_)) -> "missing ESP32 tooling"
+    Esp32HelperError(esp32.DeviceError(_)) -> "cannot inspect ESP32 devices"
     OutputFileIsDirectory(_) -> "invalid output file"
     CannotReadAvmFile(_) -> "cannot read the 'avm' file"
 
@@ -425,6 +442,13 @@ fn error_to_string(error: Error) -> String {
     CannotFindMainPartition ->
       "The partition table has no main.avm slot.\n"
       <> "Hint: pass --offset with the address printed in the boot log."
+
+    Esp32HelperError(esp32.ToolingMissing(reason:)) ->
+      reason
+      <> "\nHint: install esptool so Orbital can use its Python environment:\n"
+      <> "https://docs.espressif.com/projects/esptool/en/latest/esp32/installation.html"
+
+    Esp32HelperError(esp32.DeviceError(reason:)) -> reason
 
     OutputFileIsDirectory(file:) ->
       "'"
