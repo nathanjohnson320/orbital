@@ -1,6 +1,17 @@
 -module(orbital_ffi).
 
--export([packbeam_create/3, packbeam_list/1, run_executable/3, find_executable/1, monitor/4]).
+-export([
+    packbeam_create/3,
+    packbeam_list/1,
+    run_executable/3,
+    find_executable/1,
+    monitor/4,
+    esp32_list_devices/0,
+    esp32_select_port/1,
+    esp32_erase_flash/1,
+    esp32_read_flash/5,
+    esp32_write_flash_data/3
+]).
 
 packbeam_create(OutputPath, StartModule, Files) ->
     % The packbeam_api call expects its arguments to be Erlang charlists,
@@ -72,10 +83,10 @@ monitor(Port, Baud, Reset, Timeout) ->
     case interpreter() of
         {error, Reason} -> {error, Reason};
         {ok, Python} ->
-            case monitor_script() of
+            case priv_script(<<"monitor.py">>) of
                 {error, Reason} -> {error, Reason};
                 {ok, Script} ->
-                    run_monitor(Python, [
+                    run_streaming(Python, [
                         "-u", Script, "--port", Port,
                         "--baud", integer_to_binary(Baud),
                         "--timeout", integer_to_binary(Timeout)
@@ -87,7 +98,99 @@ monitor(Port, Baud, Reset, Timeout) ->
 reset_arg(true) -> [];
 reset_arg(false) -> ["--no-reset"].
 
-run_monitor(Python, Args) ->
+%% --- ESP32 helpers (priv/esp32.py) -----------------------------------------
+%%
+%% Each helper returns {ok, JsonBinary} | {error, ReasonBinary}. Gleam decodes
+%% the JSON so we do not have to mirror Gleam record tags here.
+
+esp32_list_devices() ->
+    run_esp32_json([<<"list-devices">>]).
+
+esp32_select_port(Port) ->
+    run_esp32_json([<<"select-port">>, <<"--port">>, Port]).
+
+esp32_erase_flash(Port) ->
+    case run_esp32_collect([<<"erase-flash">>, <<"--port">>, Port]) of
+        {ok, _Stdout} -> {ok, nil};
+        {error, Reason} -> {error, Reason}
+    end.
+
+esp32_read_flash(Port, Address, Size, OutputPath, ResetAfter) ->
+    ResetArgs = case ResetAfter of
+        true -> [<<"--reset-after">>];
+        false -> []
+    end,
+    run_esp32_json([
+        <<"read-flash">>,
+        <<"--port">>, Port,
+        <<"--address">>, integer_to_binary(Address),
+        <<"--size">>, integer_to_binary(Size),
+        <<"--output">>, OutputPath
+        | ResetArgs
+    ]).
+
+esp32_write_flash_data(Port, Address, FilePath) ->
+    case run_esp32_collect([
+        <<"write-flash-data">>,
+        <<"--port">>, Port,
+        <<"--address">>, integer_to_binary(Address),
+        <<"--file">>, FilePath
+    ]) of
+        {ok, _Stdout} -> {ok, nil};
+        {error, Reason} -> {error, Reason}
+    end.
+
+run_esp32_json(Args) ->
+    case run_esp32_collect(Args) of
+        {error, Reason} -> {error, Reason};
+        {ok, Stdout} -> {ok, first_json_line(Stdout)}
+    end.
+
+run_esp32_collect(Args) ->
+    case interpreter() of
+        {error, Reason} -> {error, Reason};
+        {ok, Python} ->
+            case priv_script(<<"esp32.py">>) of
+                {error, Reason} -> {error, Reason};
+                {ok, Script} ->
+                    collect_output(Python, [<<"-u">>, Script | Args])
+            end
+    end.
+
+first_json_line(Bin) ->
+    case binary:split(Bin, <<"\n">>, [global, trim_all]) of
+        [] -> <<>>;
+        Lines ->
+            %% Take the last non-empty line; esptool may print progress earlier.
+            lists:last(Lines)
+    end.
+
+collect_output(Python, Args) ->
+    Port = open_port({spawn_executable, Python}, [
+        {args, [to_charlist(Arg) || Arg <- Args]},
+        binary,
+        exit_status,
+        stderr_to_stdout,
+        use_stdio
+    ]),
+    collect_loop(Port, []).
+
+collect_loop(Port, Acc) ->
+    receive
+        {Port, {data, Data}} ->
+            collect_loop(Port, [Data | Acc]);
+        {Port, {exit_status, 0}} ->
+            {ok, iolist_to_binary(lists:reverse(Acc))};
+        {Port, {exit_status, _}} ->
+            Output = iolist_to_binary(lists:reverse(Acc)),
+            Reason = case string:trim(Output) of
+                <<>> -> <<"ESP32 helper failed.">>;
+                Trimmed -> Trimmed
+            end,
+            {error, Reason}
+    end.
+
+run_streaming(Python, Args) ->
     Port = open_port({spawn_executable, Python}, [
         {args, [to_charlist(Arg) || Arg <- Args]},
         binary,
@@ -155,14 +258,13 @@ first_line(Bin) ->
         _ -> Bin
     end.
 
-%% The script lives in this package. `gleam run` from the orbital repo finds
-%% it at the project root; a project that depends on orbital finds the copy
-%% gleam downloaded under build/packages.
-monitor_script() ->
+%% Scripts live in this package. `gleam run` from the orbital repo finds them
+%% at the project root; a dependent project finds copies under build/packages.
+priv_script(Name) ->
     case code:which(orbital_ffi) of
-        non_existing -> {error, <<"Cannot find priv/monitor.py.">>};
+        non_existing ->
+            {error, <<"Cannot find priv/", Name/binary, ".">>};
         Beam ->
-            %% code:which may return a path relative to the project root.
             Absolute = filename:absname(Beam),
             Build = lists:foldl(
                 fun(_, Path) -> filename:dirname(Path) end,
@@ -171,16 +273,17 @@ monitor_script() ->
             ),
             Root = filename:dirname(Build),
             first_regular([
-                filename:join(Root, "priv/monitor.py"),
-                filename:join([Build, "packages", "orbital", "priv", "monitor.py"])
-            ])
+                filename:join(Root, filename:join("priv", binary_to_list(Name))),
+                filename:join([Build, "packages", "orbital", "priv", binary_to_list(Name)])
+            ], Name)
     end.
 
-first_regular([]) -> {error, <<"Cannot find priv/monitor.py.">>};
-first_regular([Path | Rest]) ->
+first_regular([], Name) ->
+    {error, <<"Cannot find priv/", Name/binary, ".">>};
+first_regular([Path | Rest], Name) ->
     case filelib:is_regular(Path) of
         true -> {ok, Path};
-        false -> first_regular(Rest)
+        false -> first_regular(Rest, Name)
     end.
 
 -spec unsafe_characters_to_list(Name :: binary()) -> string().
