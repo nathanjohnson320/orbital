@@ -15,10 +15,24 @@ pub type Command {
   Flash(platform: FlashPlatform, help: Bool)
   Build(output_file: Option(String), help: Bool)
   List(input_file: Option(String), help: Bool)
+  Monitor(
+    port: Option(String),
+    baud: Option(Int),
+    timeout: Option(Int),
+    reset: Bool,
+    help: Bool,
+  )
 }
 
+/// `offset` is the flash address of `main.avm`. `None` means read that address
+/// from the device's partition table.
 pub type FlashPlatform {
-  Esp32(port: String, baud: Option(Int), dry_run: Bool)
+  Esp32(
+    port: Option(String),
+    baud: Option(Int),
+    offset: Option(String),
+    dry_run: Bool,
+  )
   Pico(port: String)
 }
 
@@ -30,6 +44,7 @@ pub type ParsingState {
   ParsingHelp
   ParsingBuild
   ParsingList
+  ParsingMonitor
 }
 
 pub type CustomError {
@@ -80,13 +95,18 @@ pub fn parse(args: List(String)) -> Result(Command, Error) {
 
     // with "flash" we need a little additional checks: first we need to make
     // sure that the required platform positional argument was provided.
-    // Then we have to make sure that the "port" flag exists, that is mandatory.
-    // Finally, if "baud" was provided we need to validate that it's an Int.
+    // If "baud" was provided we need to validate that it's an Int. The ESP32
+    // port is optional: esptool auto-detects it when `--port` is omitted.
     Ok(hoist.Args(arguments: ["flash", ..rest], flags:)) ->
       case toggled(flags, "help"), rest {
         True, _ ->
           Ok(Flash(
-            platform: Esp32(port: "port", baud: None, dry_run: False),
+            platform: Esp32(
+              port: None,
+              baud: None,
+              offset: None,
+              dry_run: False,
+            ),
             help: True,
           ))
 
@@ -105,13 +125,61 @@ pub fn parse(args: List(String)) -> Result(Command, Error) {
         }
 
         False, ["esp32"] -> {
-          use port <- require_flag(flags, ParsingFlash, "port")
           use baud <- optional_int_flag(flags, ParsingFlash, "baud")
+          use offset <- offset_flag(flags, ParsingFlash)
           let dry_run = toggled(flags, "dry-run")
-          Ok(Flash(platform: Esp32(port:, baud:, dry_run:), help: False))
+          Ok(Flash(
+            platform: Esp32(
+              port: option.from_result(find_flag_value(flags, "port")),
+              baud:,
+              offset:,
+              dry_run:,
+            ),
+            help: False,
+          ))
         }
 
         False, [platform] -> Error(InvalidFlashPlatform(platform))
+      }
+
+    Ok(hoist.Args(arguments: ["monitor"], flags:)) ->
+      case toggled(flags, "help") {
+        True ->
+          Ok(Monitor(
+            port: None,
+            baud: None,
+            timeout: None,
+            reset: True,
+            help: True,
+          ))
+        False -> {
+          use baud <- optional_int_flag(flags, ParsingMonitor, "baud")
+          use timeout <- optional_int_flag(flags, ParsingMonitor, "timeout")
+          case baud, timeout {
+            Some(baud), _ if baud < 1 ->
+              Error(InvalidFlagValue(
+                state: ParsingMonitor,
+                flag: "baud",
+                value: int.to_string(baud),
+                expected: "an integer greater than zero",
+              ))
+            _, Some(timeout) if timeout < 0 ->
+              Error(InvalidFlagValue(
+                state: ParsingMonitor,
+                flag: "timeout",
+                value: int.to_string(timeout),
+                expected: "a number of seconds, or 0 to run until interrupted",
+              ))
+            _, _ ->
+              Ok(Monitor(
+                port: option.from_result(find_flag_value(flags, "port")),
+                baud:,
+                timeout:,
+                reset: !toggled(flags, "no-reset"),
+                help: False,
+              ))
+          }
+        }
       }
 
     // Any other command is invalid. Hoist should prevent against this, but
@@ -141,6 +209,7 @@ fn parse_args(
       "pico", ParsingFlash -> Ok(#(ParsingFlashPico, pico_flash_flags()))
 
       "list", ParsingBase -> Ok(#(ParsingList, list_flags()))
+      "monitor", ParsingBase -> Ok(#(ParsingMonitor, monitor_flags()))
       "help", ParsingBase -> Ok(#(ParsingHelp, help_flags()))
       _, ParsingBase -> Error(UnknownCommand(command:))
 
@@ -152,6 +221,9 @@ fn parse_args(
 
       // The "list" command accepts no subcommands
       _, ParsingList -> Error(UnknownCommand(command:))
+
+      // The "monitor" command accepts no subcommands
+      _, ParsingMonitor -> Error(UnknownCommand(command:))
 
       // The "flash" command takes positional arguments, but no subcommands, so
       // there's no need to special case any of them as they don't change the
@@ -224,6 +296,7 @@ fn esp_flash_flags() -> ValidatedFlagSpecs {
       hoist.new_flag("dry-run")
         |> hoist.with_short_alias("d")
         |> hoist.as_toggle,
+      hoist.new_flag("offset"),
       hoist.new_flag("help")
         |> hoist.with_short_alias("h")
         |> hoist.as_toggle,
@@ -239,6 +312,28 @@ fn pico_flash_flags() -> ValidatedFlagSpecs {
     ])
   pico_flash_flags
 }
+
+fn monitor_flags() -> ValidatedFlagSpecs {
+  let assert Ok(monitor_flags) =
+    hoist.validate_flag_specs([
+      hoist.new_flag("port")
+        |> hoist.with_short_alias("p"),
+      hoist.new_flag("baud")
+        |> hoist.with_short_alias("b"),
+      hoist.new_flag("timeout")
+        |> hoist.with_short_alias("t"),
+      hoist.new_flag("no-reset")
+        |> hoist.as_toggle,
+      hoist.new_flag("help")
+        |> hoist.with_short_alias("h")
+        |> hoist.as_toggle,
+    ])
+  monitor_flags
+}
+
+const default_monitor_baud = "115200"
+
+const default_monitor_timeout = "10"
 
 // --- HELPERS TO WORK WITH FLAGS ----------------------------------------------
 
@@ -286,6 +381,66 @@ fn optional_int_flag(
   }
 }
 
+fn offset_flag(
+  flags: List(hoist.Flag),
+  state: ParsingState,
+  continue: fn(Option(String)) -> Result(a, Error),
+) -> Result(a, Error) {
+  case find_flag_value(flags, "offset") {
+    Error(_) -> continue(None)
+    Ok(value) ->
+      case is_hex_address(value) {
+        True -> continue(Some(value))
+        False ->
+          Error(InvalidFlagValue(
+            state:,
+            flag: "offset",
+            value:,
+            expected: "a hex address like 0x2b8000",
+          ))
+      }
+  }
+}
+
+fn is_hex_address(value: String) -> Bool {
+  case value {
+    "0x" <> digits | "0X" <> digits -> digits != "" && hex_digits(digits)
+    _ -> False
+  }
+}
+
+fn hex_digits(digits: String) -> Bool {
+  digits
+  |> string.to_graphemes
+  |> list.all(fn(digit) {
+    case digit {
+      "0"
+      | "1"
+      | "2"
+      | "3"
+      | "4"
+      | "5"
+      | "6"
+      | "7"
+      | "8"
+      | "9"
+      | "a"
+      | "b"
+      | "c"
+      | "d"
+      | "e"
+      | "f"
+      | "A"
+      | "B"
+      | "C"
+      | "D"
+      | "E"
+      | "F" -> True
+      _ -> False
+    }
+  })
+}
+
 fn toggled(flags: List(hoist.Flag), name: String) {
   list.contains(flags, hoist.ToggleFlag(name))
 }
@@ -302,13 +457,15 @@ pub fn usage_text() -> Document {
     doc.lines(2),
     doc.from_string(ansi.magenta("Commands:")),
     doc.line,
-    command_line("  build  ", "build your code into an 'avm' file"),
+    command_line("  build    ", "build your code into an 'avm' file"),
     doc.line,
-    command_line("  flash  ", "build and flash your code to a device"),
+    command_line("  flash    ", "build and flash your code to a device"),
     doc.line,
-    command_line("  list   ", "list the contents of an 'avm' file"),
+    command_line("  list     ", "list the contents of an 'avm' file"),
     doc.line,
-    command_line("  help   ", "show this help text"),
+    command_line("  monitor  ", "show the console of an ESP32 board"),
+    doc.line,
+    command_line("  help     ", "show this help text"),
     doc.lines(2),
     doc.from_string(ansi.magenta("Flags:")),
     doc.line,
@@ -339,7 +496,7 @@ pub fn flash_help_text(description: Bool) -> Document {
     doc.line,
     flag_line(
       "    -p, --port     <STRING>  ",
-      "the path where to find the esp device",
+      "serial port. esptool auto-detects it when omitted",
     ),
     doc.line,
     flag_line_with_default(
@@ -351,6 +508,11 @@ pub fn flash_help_text(description: Bool) -> Document {
     flag_line(
       "    -d, --dry-run            ",
       "only show the command used to flash the device",
+    ),
+    doc.line,
+    flag_line(
+      "    --offset       <HEX>    ",
+      "flash address. Read from the device's main.avm partition when omitted",
     ),
     doc.lines(2),
     command_line("  pico   ", ""),
@@ -432,6 +594,51 @@ pub fn list_help_text(description: Bool) -> Document {
   |> doc.concat
 }
 
+pub fn monitor_help_text(description: Bool) -> Document {
+  [
+    case description {
+      False -> doc.empty
+      True ->
+        "Show what an ESP32 board writes on its serial port."
+        |> flex_text
+        |> doc.append(doc.lines(2))
+    },
+    doc.from_string(
+      ansi.magenta("Usage: ")
+      <> ansi.green("gleam run -m orbital ")
+      <> "monitor <FLAGS>",
+    ),
+    doc.lines(2),
+    doc.from_string(ansi.magenta("Flags:")),
+    doc.line,
+    flag_line(
+      "  -p, --port      <PATH>  ",
+      "serial port. Chosen automatically when only one board is connected",
+    ),
+    doc.line,
+    flag_line_with_default(
+      "  -b, --baud      <INT>   ",
+      "console baud rate. This is not the flashing baud",
+      default_monitor_baud,
+    ),
+    doc.line,
+    flag_line_with_default(
+      "  -t, --timeout   <INT>   ",
+      "stop after this many seconds. 0 reads until Ctrl+C, pressed twice",
+      default_monitor_timeout,
+    ),
+    doc.line,
+    flag_line(
+      "  --no-reset              ",
+      "do not reset the board, show its output from now on",
+    ),
+    doc.line,
+    flag_line("  -h, --help              ", "show this help text"),
+  ]
+  |> doc.concat
+  |> doc.group
+}
+
 pub fn help_text_for_state(state: ParsingState) -> Document {
   case state {
     ParsingBase -> usage_text()
@@ -440,6 +647,7 @@ pub fn help_text_for_state(state: ParsingState) -> Document {
     ParsingHelp -> usage_text()
     ParsingBuild -> build_help_text(False)
     ParsingList -> list_help_text(False)
+    ParsingMonitor -> monitor_help_text(False)
   }
 }
 
