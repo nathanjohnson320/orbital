@@ -10,6 +10,10 @@ Subcommands:
   erase-flash --port PORT|auto
   read-flash --port PORT --address HEX|INT --size HEX|INT --output PATH [--reset-after]
   write-flash-data --port PORT --address HEX|INT --file PATH
+  write-flash-size-and-partition --port PORT
+      --bootloader-offset HEX|INT --bootloader PATH
+      --partition-offset HEX|INT --partition PATH
+      --flash-size-name NAME
 """
 
 from __future__ import annotations
@@ -45,6 +49,17 @@ def main(argv: list[str] | None = None) -> int:
     write.add_argument("--address", required=True)
     write.add_argument("--file", required=True)
 
+    expand_write = sub.add_parser(
+        "write-flash-size-and-partition",
+        help="Update bootloader flash size and rewrite the partition table",
+    )
+    expand_write.add_argument("--port", required=True)
+    expand_write.add_argument("--bootloader-offset", required=True)
+    expand_write.add_argument("--bootloader", required=True)
+    expand_write.add_argument("--partition-offset", required=True)
+    expand_write.add_argument("--partition", required=True)
+    expand_write.add_argument("--flash-size-name", required=True)
+
     args = parser.parse_args(argv)
 
     try:
@@ -69,6 +84,16 @@ def main(argv: list[str] | None = None) -> int:
                 resolve_esp_port(args.port),
                 parse_int(args.address),
                 Path(args.file).read_bytes(),
+            )
+            return emit({"ok": True})
+        if args.command == "write-flash-size-and-partition":
+            write_flash_size_and_partition(
+                resolve_esp_port(args.port),
+                parse_int(args.bootloader_offset),
+                Path(args.bootloader).read_bytes(),
+                parse_int(args.partition_offset),
+                Path(args.partition).read_bytes(),
+                args.flash_size_name,
             )
             return emit({"ok": True})
     except LookupError as error:
@@ -254,6 +279,76 @@ def write_flash_data(port: str, address: int, data: bytes) -> None:
         attach_flash(esp)
         try:
             write_flash(esp, [(address, data)], flash_size="keep")
+        finally:
+            reset_chip(esp, "hard-reset")
+
+
+def write_flash_size_and_partition(
+    port: str,
+    bootloader_offset: int,
+    bootloader: bytes,
+    partition_table_offset: int,
+    partition_table: bytes,
+    flash_size_name: str,
+) -> None:
+    """Rewrite bootloader flash-size header and partition table together.
+
+    Mirrors ExAtomVM's EsptoolHelper.write_flash_size_and_partition: uses
+    esptool's `_update_image_flash_params` so mode/frequency stay `keep` while
+    the size nibble matches the detected chip flash.
+    """
+    from esptool.cmds import (
+        _update_image_flash_params,
+        attach_flash,
+        detect_chip,
+        detect_flash_size,
+        reset_chip,
+        write_flash,
+    )
+
+    with detect_chip(port) as esp:
+        attach_flash(esp)
+        try:
+            if esp.BOOTLOADER_FLASH_OFFSET != bootloader_offset:
+                raise RuntimeError(
+                    f"Unexpected bootloader offset {bootloader_offset:#x}; "
+                    f"{esp.CHIP_NAME} uses {esp.BOOTLOADER_FLASH_OFFSET:#x}"
+                )
+            if esp.secure_download_mode or esp.get_secure_boot_enabled():
+                raise RuntimeError(
+                    "Cannot update the flash-size header when secure boot "
+                    "or secure download mode is enabled"
+                )
+
+            detected_size = detect_flash_size(esp)
+            if detected_size != flash_size_name:
+                raise RuntimeError(
+                    f"Flash size changed from {flash_size_name} "
+                    f"to {detected_size or 'unknown'}"
+                )
+
+            updated_bootloader = _update_image_flash_params(
+                esp,
+                bootloader_offset,
+                "keep",
+                "keep",
+                flash_size_name,
+                bootloader,
+            )
+            expected_size_id = esp.parse_flash_size_arg(flash_size_name)
+            if updated_bootloader[0] != esp.ESP_IMAGE_MAGIC:
+                raise RuntimeError("Invalid bootloader image header")
+            if updated_bootloader[3] & 0xF0 != expected_size_id:
+                raise RuntimeError("Failed to update bootloader flash-size header")
+
+            write_flash(
+                esp,
+                [
+                    (bootloader_offset, updated_bootloader),
+                    (partition_table_offset, partition_table),
+                ],
+                flash_size="keep",
+            )
         finally:
             reset_chip(esp, "hard-reset")
 
