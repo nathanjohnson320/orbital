@@ -12,6 +12,7 @@ import gleam/result
 import gleam/string
 import gleam_community/ansi
 import orbital/internal/cli
+import orbital/internal/esp32
 import orbital/internal/executable.{type ExecutablePath}
 import orbital/internal/partition
 import orbital/internal/project.{
@@ -61,6 +62,10 @@ pub fn main() -> Nil {
       print_document(cli.monitor_help_text(True))
     Ok(cli.Monitor(port:, baud:, timeout:, reset:, help: False)) ->
       monitor(port, baud, timeout, reset)
+
+    Ok(cli.EraseFlash(help: True, ..)) ->
+      print_document(cli.erase_flash_help_text(True))
+    Ok(cli.EraseFlash(port:, help: False)) -> erase_flash(port)
 
     // Flashing is the more involved step, and changes based on the device.
     Ok(cli.Flash(help: True, ..)) -> print_document(cli.flash_help_text(True))
@@ -159,6 +164,31 @@ fn monitor(
       exit(1)
     }
   }
+}
+
+fn erase_flash(port: Option(String)) -> Nil {
+  let port = esp32.port_or_auto(port)
+  case do_erase_flash(port) {
+    Ok(resolved_port) ->
+      io.println(ansi.magenta(
+        "⚛️  erased the flash on '" <> resolved_port <> "'!",
+      ))
+    Error(error) -> {
+      io.println(error_to_string(error))
+      exit(1)
+    }
+  }
+}
+
+fn do_erase_flash(port: String) -> Result(String, Error) {
+  use resolved_port <- result.try(
+    esp32.select_port(port) |> result.map_error(Esp32HelperError),
+  )
+  io.println(ansi.dim("Erasing flash on '" <> resolved_port <> "'..."))
+  use Nil <- result.try(
+    esp32.erase_flash(resolved_port) |> result.map_error(Esp32HelperError),
+  )
+  Ok(resolved_port)
 }
 
 fn build(output_file: Option(String)) -> Nil {
@@ -344,6 +374,7 @@ type Error {
   EsptoolCannotOpenPort(port: String)
   CannotReadPartitionTable
   CannotFindMainPartition
+  Esp32HelperError(reason: esp32.Error)
 }
 
 fn error_to_string(error: Error) -> String {
@@ -358,6 +389,8 @@ fn error_to_string(error: Error) -> String {
     | CannotFlashPico(_)
     | CannotReadPartitionTable
     | CannotFindMainPartition -> "cannot flash device"
+    Esp32HelperError(esp32.ToolingMissing(_)) -> "missing ESP32 tooling"
+    Esp32HelperError(esp32.DeviceError(_)) -> "cannot erase flash"
     OutputFileIsDirectory(_) -> "invalid output file"
     CannotReadAvmFile(_) -> "cannot read the 'avm' file"
 
@@ -425,6 +458,13 @@ fn error_to_string(error: Error) -> String {
     CannotFindMainPartition ->
       "The partition table has no main.avm slot.\n"
       <> "Hint: pass --offset with the address printed in the boot log."
+
+    Esp32HelperError(esp32.ToolingMissing(reason:)) ->
+      reason
+      <> "\nHint: install esptool so Orbital can use its Python environment:\n"
+      <> "https://docs.espressif.com/projects/esptool/en/latest/esp32/installation.html"
+
+    Esp32HelperError(esp32.DeviceError(reason:)) -> reason
 
     OutputFileIsDirectory(file:) ->
       "'"
