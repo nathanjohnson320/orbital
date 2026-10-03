@@ -2,10 +2,12 @@
 
 ## Unreleased
 
+- Added an `expand` command that grows the final `main.avm` partition to the end
+  of detected ESP32 flash and updates the bootloader flash-size header.
 - Added shared ESP32 device helpers (`orbital/internal/esp32`) backed by
   `priv/esp32.py` for listing devices, selecting a port, erasing flash, and
   reading/writing flash regions. Follow-up PRs will wire `erase-flash`, `info`,
-  `expand`, and `install` commands.
+  and `install` commands.
 - Extended partition-table parsing with `main.avm` expansion helpers and added
   ESP32 image-header flash-size helpers for upcoming expand support.
 - ESP32 flash reads the device partition table and writes the application at

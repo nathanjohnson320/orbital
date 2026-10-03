@@ -22,6 +22,7 @@ pub type Command {
     reset: Bool,
     help: Bool,
   )
+  Expand(port: Option(String), help: Bool)
 }
 
 /// `offset` is the flash address of `main.avm`. `None` means read that address
@@ -45,6 +46,7 @@ pub type ParsingState {
   ParsingBuild
   ParsingList
   ParsingMonitor
+  ParsingExpand
 }
 
 pub type CustomError {
@@ -182,6 +184,16 @@ pub fn parse(args: List(String)) -> Result(Command, Error) {
         }
       }
 
+    Ok(hoist.Args(arguments: ["expand"], flags:)) ->
+      case toggled(flags, "help") {
+        True -> Ok(Expand(port: None, help: True))
+        False ->
+          Ok(Expand(
+            port: option.from_result(find_flag_value(flags, "port")),
+            help: False,
+          ))
+      }
+
     // Any other command is invalid. Hoist should prevent against this, but
     // rather than panicking I just use the same error.
     Ok(hoist.Args(arguments: [command, ..], flags: _)) -> {
@@ -210,6 +222,7 @@ fn parse_args(
 
       "list", ParsingBase -> Ok(#(ParsingList, list_flags()))
       "monitor", ParsingBase -> Ok(#(ParsingMonitor, monitor_flags()))
+      "expand", ParsingBase -> Ok(#(ParsingExpand, expand_flags()))
       "help", ParsingBase -> Ok(#(ParsingHelp, help_flags()))
       _, ParsingBase -> Error(UnknownCommand(command:))
 
@@ -224,6 +237,9 @@ fn parse_args(
 
       // The "monitor" command accepts no subcommands
       _, ParsingMonitor -> Error(UnknownCommand(command:))
+
+      // The "expand" command accepts no subcommands
+      _, ParsingExpand -> Error(UnknownCommand(command:))
 
       // The "flash" command takes positional arguments, but no subcommands, so
       // there's no need to special case any of them as they don't change the
@@ -329,6 +345,18 @@ fn monitor_flags() -> ValidatedFlagSpecs {
         |> hoist.as_toggle,
     ])
   monitor_flags
+}
+
+fn expand_flags() -> ValidatedFlagSpecs {
+  let assert Ok(expand_flags) =
+    hoist.validate_flag_specs([
+      hoist.new_flag("port")
+        |> hoist.with_short_alias("p"),
+      hoist.new_flag("help")
+        |> hoist.with_short_alias("h")
+        |> hoist.as_toggle,
+    ])
+  expand_flags
 }
 
 const default_monitor_baud = "115200"
@@ -464,6 +492,8 @@ pub fn usage_text() -> Document {
     command_line("  list     ", "list the contents of an 'avm' file"),
     doc.line,
     command_line("  monitor  ", "show the console of an ESP32 board"),
+    doc.line,
+    command_line("  expand   ", "grow main.avm to the end of ESP32 flash"),
     doc.line,
     command_line("  help     ", "show this help text"),
     doc.lines(2),
@@ -639,6 +669,37 @@ pub fn monitor_help_text(description: Bool) -> Document {
   |> doc.group
 }
 
+pub fn expand_help_text(description: Bool) -> Document {
+  [
+    case description {
+      False -> doc.empty
+      True ->
+        {
+          "Expand the final main.avm partition to the end of the detected ESP32 flash, "
+          <> "and update the bootloader flash-size header when needed."
+        }
+        |> flex_text
+        |> doc.append(doc.lines(2))
+    },
+    doc.from_string(
+      ansi.magenta("Usage: ")
+      <> ansi.green("gleam run -m orbital ")
+      <> "expand <FLAGS>",
+    ),
+    doc.lines(2),
+    doc.from_string(ansi.magenta("Flags:")),
+    doc.line,
+    flag_line(
+      "  -p, --port      <PATH>  ",
+      "serial port. Chosen automatically when only one board is connected",
+    ),
+    doc.line,
+    flag_line("  -h, --help              ", "show this help text"),
+  ]
+  |> doc.concat
+  |> doc.group
+}
+
 pub fn help_text_for_state(state: ParsingState) -> Document {
   case state {
     ParsingBase -> usage_text()
@@ -648,6 +709,7 @@ pub fn help_text_for_state(state: ParsingState) -> Document {
     ParsingBuild -> build_help_text(False)
     ParsingList -> list_help_text(False)
     ParsingMonitor -> monitor_help_text(False)
+    ParsingExpand -> expand_help_text(False)
   }
 }
 
