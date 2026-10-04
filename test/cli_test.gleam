@@ -1,6 +1,6 @@
 import gleam/option.{None, Some}
 import gleeunit
-import orbital/internal/cli.{EraseFlash, Esp32, Flash, Info, Monitor}
+import orbital/internal/cli.{EraseFlash, Esp32, Expand, Flash, Info, Monitor}
 
 pub fn main() -> Nil {
   gleeunit.main()
@@ -59,6 +59,23 @@ pub fn monitor_flags_test() {
   assert port == Some("/dev/ttyACM0")
   assert baud == Some(9600)
   assert timeout == Some(0)
+}
+
+pub fn expand_defaults_test() {
+  let assert Ok(Expand(port:, help: False)) = cli.parse(["expand"])
+
+  assert port == None
+}
+
+pub fn expand_accepts_an_explicit_port_test() {
+  let assert Ok(Expand(port:, help: False)) =
+    cli.parse(["expand", "--port", "/dev/ttyACM0"])
+
+  assert port == Some("/dev/ttyACM0")
+}
+
+pub fn expand_help_test() {
+  let assert Ok(Expand(help: True, ..)) = cli.parse(["expand", "--help"])
 }
 
 pub fn info_defaults_test() {

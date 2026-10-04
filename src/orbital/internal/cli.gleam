@@ -22,6 +22,7 @@ pub type Command {
     reset: Bool,
     help: Bool,
   )
+  Expand(port: Option(String), help: Bool)
   EraseFlash(port: Option(String), help: Bool)
   Info(help: Bool)
 }
@@ -47,6 +48,7 @@ pub type ParsingState {
   ParsingBuild
   ParsingList
   ParsingMonitor
+  ParsingExpand
   ParsingEraseFlash
   ParsingInfo
 }
@@ -186,6 +188,16 @@ pub fn parse(args: List(String)) -> Result(Command, Error) {
         }
       }
 
+    Ok(hoist.Args(arguments: ["expand"], flags:)) ->
+      case toggled(flags, "help") {
+        True -> Ok(Expand(port: None, help: True))
+        False ->
+          Ok(Expand(
+            port: option.from_result(find_flag_value(flags, "port")),
+            help: False,
+          ))
+      }
+
     Ok(hoist.Args(arguments: ["erase-flash"], flags:)) ->
       case toggled(flags, "help") {
         True -> Ok(EraseFlash(port: None, help: True))
@@ -227,6 +239,7 @@ fn parse_args(
 
       "list", ParsingBase -> Ok(#(ParsingList, list_flags()))
       "monitor", ParsingBase -> Ok(#(ParsingMonitor, monitor_flags()))
+      "expand", ParsingBase -> Ok(#(ParsingExpand, expand_flags()))
       "erase-flash", ParsingBase ->
         Ok(#(ParsingEraseFlash, erase_flash_flags()))
       "info", ParsingBase -> Ok(#(ParsingInfo, info_flags()))
@@ -244,6 +257,9 @@ fn parse_args(
 
       // The "monitor" command accepts no subcommands
       _, ParsingMonitor -> Error(UnknownCommand(command:))
+
+      // The "expand" command accepts no subcommands
+      _, ParsingExpand -> Error(UnknownCommand(command:))
 
       // The "erase-flash" command accepts no subcommands
       _, ParsingEraseFlash -> Error(UnknownCommand(command:))
@@ -357,6 +373,18 @@ fn monitor_flags() -> ValidatedFlagSpecs {
   monitor_flags
 }
 
+fn expand_flags() -> ValidatedFlagSpecs {
+  let assert Ok(expand_flags) =
+    hoist.validate_flag_specs([
+      hoist.new_flag("port")
+        |> hoist.with_short_alias("p"),
+      hoist.new_flag("help")
+        |> hoist.with_short_alias("h")
+        |> hoist.as_toggle,
+    ])
+  expand_flags
+}
+
 fn erase_flash_flags() -> ValidatedFlagSpecs {
   let assert Ok(erase_flash_flags) =
     hoist.validate_flag_specs([
@@ -373,8 +401,8 @@ fn info_flags() -> ValidatedFlagSpecs {
   let assert Ok(info_flags) =
     hoist.validate_flag_specs([
       hoist.new_flag("help")
-        |> hoist.with_short_alias("h")
-        |> hoist.as_toggle,
+      |> hoist.with_short_alias("h")
+      |> hoist.as_toggle,
     ])
   info_flags
 }
@@ -514,6 +542,8 @@ pub fn usage_text() -> Document {
     command_line("  list         ", "list the contents of an 'avm' file"),
     doc.line,
     command_line("  monitor      ", "show the console of an ESP32 board"),
+    doc.line,
+    command_line("  expand       ", "grow main.avm to the end of ESP32 flash"),
     doc.line,
     command_line("  erase-flash  ", "erase the flash of an ESP32 board"),
     doc.line,
@@ -691,6 +721,37 @@ pub fn monitor_help_text(description: Bool) -> Document {
   |> doc.group
 }
 
+pub fn expand_help_text(description: Bool) -> Document {
+  [
+    case description {
+      False -> doc.empty
+      True ->
+        {
+          "Expand the final main.avm partition to the end of the detected ESP32 flash, "
+          <> "and update the bootloader flash-size header when needed."
+        }
+        |> flex_text
+        |> doc.append(doc.lines(2))
+    },
+    doc.from_string(
+      ansi.magenta("Usage: ")
+      <> ansi.green("gleam run -m orbital ")
+      <> "expand <FLAGS>",
+    ),
+    doc.lines(2),
+    doc.from_string(ansi.magenta("Flags:")),
+    doc.line,
+    flag_line(
+      "  -p, --port      <PATH>  ",
+      "serial port. Chosen automatically when only one board is connected",
+    ),
+    doc.line,
+    flag_line("  -h, --help              ", "show this help text"),
+  ]
+  |> doc.concat
+  |> doc.group
+}
+
 pub fn erase_flash_help_text(description: Bool) -> Document {
   [
     case description {
@@ -751,6 +812,7 @@ pub fn help_text_for_state(state: ParsingState) -> Document {
     ParsingBuild -> build_help_text(False)
     ParsingList -> list_help_text(False)
     ParsingMonitor -> monitor_help_text(False)
+    ParsingExpand -> expand_help_text(False)
     ParsingEraseFlash -> erase_flash_help_text(False)
     ParsingInfo -> info_help_text(False)
   }
