@@ -32,10 +32,13 @@ To build and flash it to a device with the AtomVM firmware installed you can
 run:
 
 ```sh
+gleam run -m orbital info
 gleam run -m orbital flash esp32
 gleam run -m orbital monitor
 gleam run -m orbital erase-flash
 ```
+
+`info` lists connected ESP32 boards and whether AtomVM is already installed.
 
 `flash` reads the device partition table and writes the application at the
 `main.avm` address. Pass `--offset 0x2b8000` to choose an address yourself.

@@ -1,6 +1,6 @@
 import gleam/option.{None, Some}
 import gleeunit
-import orbital/internal/cli.{EraseFlash, Esp32, Flash, Monitor}
+import orbital/internal/cli.{EraseFlash, Esp32, Flash, Info, Monitor}
 
 pub fn main() -> Nil {
   gleeunit.main()
@@ -59,6 +59,14 @@ pub fn monitor_flags_test() {
   assert port == Some("/dev/ttyACM0")
   assert baud == Some(9600)
   assert timeout == Some(0)
+}
+
+pub fn info_defaults_test() {
+  let assert Ok(Info(help: False)) = cli.parse(["info"])
+}
+
+pub fn info_help_test() {
+  let assert Ok(Info(help: True)) = cli.parse(["info", "--help"])
 }
 
 pub fn erase_flash_defaults_test() {
