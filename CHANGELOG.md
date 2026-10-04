@@ -2,8 +2,30 @@
 
 ## Unreleased
 
-- Orbital now has a `--version` flag to print its version.
-- Orbital now has a `list` command to list the contents of an avm file.
+- Added `install` to download/install/update AtomVM on ESP32 boards
+  (`--image`, `--version`, `--repo`, `--update`, `--download-only`,
+  `--list-images`, `--chip`, `--port`, `--baud`), with firmware caching under
+  `firmware_images/` and ExAtomVM-compatible update guardrails. Listing and
+  download use Gleam (`gleam_httpc` / `gleam_json`); only zip member reads and
+  ESP32 device I/O still go through thin Erlang / `priv/esp32.py` helpers.
+  Parity fixes vs ExAtomVM: exact-chip Elixir release selection, factory zip
+  bundle verification + FLASH.txt update parts, reject `--download-only` with a
+  local path, and richer `--list-images` rendering.
+- Added an `expand` command that grows the final `main.avm` partition to the end
+  of detected ESP32 flash and updates the bootloader flash-size header.
+- Orbital now has an `info` command to list connected ESP32 boards and AtomVM
+  install status.
+- Orbital now has an `erase-flash` command to wipe an ESP32 board's flash.
+- Added shared ESP32 device helpers (`orbital/internal/esp32`) backed by
+  `priv/esp32.py` for listing devices, selecting a port, erasing flash, and
+  reading/writing flash regions.
+- Extended partition-table parsing with `main.avm` expansion helpers and added
+  ESP32 image-header flash-size helpers for upcoming expand support.
+- ESP32 flash reads the device partition table and writes the application at
+  the `main.avm` address. `--offset` selects a different address.
+- The ESP32 flash command lets esptool auto-detect the serial port when
+  `--port` is omitted.
+- Orbital now has a `monitor` command to show an ESP32 board's console.
 
 ## v1.1.0 - 2026-04-05
 

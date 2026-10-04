@@ -12,7 +12,11 @@ import gleam/result
 import gleam/string
 import gleam_community/ansi
 import orbital/internal/cli
+import orbital/internal/esp32
 import orbital/internal/executable.{type ExecutablePath}
+import orbital/internal/image_header
+import orbital/internal/install
+import orbital/internal/partition
 import orbital/internal/project.{
   type Project, CannotParseGleamToml, CannotReadGleamToml, CannotReadProjectName,
 }
@@ -22,6 +26,10 @@ import term_size
 import tom.{NotFound, WrongType}
 
 const default_baud = 921_600
+
+const default_monitor_baud = 115_200
+
+const default_monitor_timeout = 10
 
 fn print_document(document: Document) -> Nil {
   term_size.columns()
@@ -52,6 +60,47 @@ pub fn main() -> Nil {
     Ok(cli.List(help: True, ..)) -> print_document(cli.list_help_text(True))
     Ok(cli.List(input_file:, help: False)) -> list(input_file)
 
+    Ok(cli.Monitor(help: True, ..)) ->
+      print_document(cli.monitor_help_text(True))
+    Ok(cli.Monitor(port:, baud:, timeout:, reset:, help: False)) ->
+      monitor(port, baud, timeout, reset)
+
+    Ok(cli.Install(help: True, ..)) ->
+      print_document(cli.install_help_text(True))
+    Ok(cli.Install(
+      image:,
+      version:,
+      repo:,
+      update:,
+      download_only:,
+      list_images:,
+      chip:,
+      baud:,
+      port:,
+      help: False,
+    )) ->
+      run_install(install.Options(
+        image:,
+        version:,
+        repo:,
+        update:,
+        download_only:,
+        list_images:,
+        chip:,
+        baud: option.unwrap(baud, default_baud),
+        port:,
+      ))
+
+    Ok(cli.Expand(help: True, ..)) -> print_document(cli.expand_help_text(True))
+    Ok(cli.Expand(port:, help: False)) -> expand(port)
+
+    Ok(cli.EraseFlash(help: True, ..)) ->
+      print_document(cli.erase_flash_help_text(True))
+    Ok(cli.EraseFlash(port:, help: False)) -> erase_flash(port)
+
+    Ok(cli.Info(help: True)) -> print_document(cli.info_help_text(True))
+    Ok(cli.Info(help: False)) -> info()
+
     // Flashing is the more involved step, and changes based on the device.
     Ok(cli.Flash(help: True, ..)) -> print_document(cli.flash_help_text(True))
     Ok(cli.Flash(help: False, platform:)) -> flash(platform)
@@ -64,12 +113,12 @@ pub fn main() -> Nil {
 
 fn flash(platform: cli.FlashPlatform) -> Nil {
   let flashed_device = case platform {
-    cli.Esp32(port:, baud:, dry_run: True) -> {
-      flash_esp32_dry_run(port, baud)
+    cli.Esp32(port:, baud:, offset:, dry_run: True) -> {
+      flash_esp32_dry_run(port, baud, offset)
       Ok(False)
     }
-    cli.Esp32(port:, baud:, dry_run: False) -> {
-      use _ <- result.try(do_flash_esp32(port, baud))
+    cli.Esp32(port:, baud:, offset:, dry_run: False) -> {
+      use _ <- result.try(do_flash_esp32(port, baud, offset))
       Ok(True)
     }
     cli.Pico(port:) -> {
@@ -88,20 +137,306 @@ fn flash(platform: cli.FlashPlatform) -> Nil {
   }
 }
 
-fn flash_esp32_dry_run(port: String, baud: Option(Int)) -> Nil {
+fn flash_esp32_dry_run(
+  port: Option(String),
+  baud: Option(Int),
+  offset: Option(String),
+) -> Nil {
   let baud = option.unwrap(baud, default_baud) |> int.to_string
-  let command =
-    [
+  let port_line = case port {
+    Some(port) -> "    --port '" <> port <> "' \\"
+    None -> ""
+  }
+  let address = option.unwrap(offset, "<MAIN_AVM_OFFSET>")
+  let read_partition = case offset {
+    Some(_) -> []
+    None -> [
       "  esptool --chip auto \\",
-      "    --port '" <> port <> "' \\",
+      port_line,
+      "    --baud " <> baud <> " \\",
+      "    read-flash 0x8000 0xC00 <PARTITION_TABLE>",
+      "",
+    ]
+  }
+  let command =
+    list.append(read_partition, [
+      "  esptool --chip auto \\",
+      port_line,
       "    --baud " <> baud <> " \\",
       "    --before default-reset --after hard-reset write-flash -u \\",
-      "    --flash-mode keep --flash-freq keep --flash-size detect 0x210000 \\",
+      "    --flash-mode keep --flash-freq keep --flash-size detect "
+        <> address
+        <> " \\",
       "    <AVM_FILE>",
-    ]
+    ])
+    |> list.filter(keeping: fn(line) { line != "" })
     |> string.join(with: "\n")
 
   io.println("To flash the device I would run this command:\n\n" <> command)
+}
+
+fn run_install(options: install.Options) -> Nil {
+  case install.run(options) {
+    Ok(Nil) -> Nil
+    Error(install.Cancelled) -> exit(0)
+    Error(error) -> {
+      let message = install.error_message(error)
+      case message {
+        "" -> Nil
+        _ -> io.println(error_heading("install failed") <> "\n" <> message)
+      }
+      exit(1)
+    }
+  }
+}
+
+fn monitor(
+  port: Option(String),
+  baud: Option(Int),
+  timeout: Option(Int),
+  reset: Bool,
+) -> Nil {
+  let port = option.unwrap(port, "auto")
+  let baud = option.unwrap(baud, default_monitor_baud)
+  let timeout = option.unwrap(timeout, default_monitor_timeout)
+  case monitor_serial(port, baud, reset, timeout) {
+    Ok(Nil) ->
+      case timeout {
+        0 -> Nil
+        1 -> io.println("Stopped after 1 second.")
+        seconds ->
+          io.println("Stopped after " <> int.to_string(seconds) <> " seconds.")
+      }
+    Error("") -> exit(1)
+    Error(reason) -> {
+      io.println_error(reason)
+      exit(1)
+    }
+  }
+}
+
+fn expand(port: Option(String)) -> Nil {
+  case do_expand(esp32.port_or_auto(port)) {
+    Ok(AlreadyExpanded) ->
+      io.println("Bootloader and main.avm already use the detected flash size.")
+    Ok(Expanded) ->
+      io.println(ansi.magenta(
+        "⚛️  updated the bootloader flash size, expanded main.avm, and verified both!",
+      ))
+    Error(error) -> {
+      io.println(error_to_string(error))
+      exit(1)
+    }
+  }
+}
+
+type ExpandOutcome {
+  AlreadyExpanded
+  Expanded
+}
+
+fn do_expand(port: String) -> Result(ExpandOutcome, Error) {
+  use resolved_port <- result.try(
+    esp32.select_port(port) |> result.map_error(Esp32HelperError),
+  )
+  io.println(ansi.dim("Expanding main.avm on '" <> resolved_port <> "'..."))
+
+  let table_offset = partition.expected_table_offset()
+  let table_size = partition.expected_table_size()
+
+  use #(table, table_meta) <- result.try(
+    esp32.read_flash_bytes(
+      port: resolved_port,
+      address: table_offset,
+      size: table_size,
+      reset_after: True,
+    )
+    |> result.map_error(Esp32HelperError),
+  )
+
+  use expansion <- result.try(
+    partition.expand_partition(table, "main.avm", table_meta.flash_size)
+    |> result.map_error(ExpandPartitionError),
+  )
+
+  let bootloader_offset = table_meta.bootloader_offset
+  let bootloader_size = table_offset - bootloader_offset
+  use Nil <- result.try(case bootloader_size > 0 {
+    True -> Ok(Nil)
+    False -> Error(InvalidBootloaderOffset)
+  })
+
+  use #(bootloader, _) <- result.try(
+    esp32.read_flash_bytes(
+      port: resolved_port,
+      address: bootloader_offset,
+      size: bootloader_size,
+      reset_after: True,
+    )
+    |> result.map_error(Esp32HelperError),
+  )
+
+  use bootloader_flash_size <- result.try(
+    image_header.flash_size(bootloader)
+    |> result.map_error(ExpandImageHeaderError),
+  )
+
+  print_expansion_summary(
+    resolved_port,
+    table_meta,
+    bootloader_flash_size,
+    expansion,
+  )
+
+  case bootloader_flash_size == table_meta.flash_size && !expansion.changed {
+    True -> Ok(AlreadyExpanded)
+    False -> {
+      use Nil <- result.try(apply_expansion(
+        resolved_port,
+        table_meta,
+        bootloader,
+        expansion,
+      ))
+      Ok(Expanded)
+    }
+  }
+}
+
+fn print_expansion_summary(
+  port: String,
+  table_meta: esp32.FlashRead,
+  bootloader_flash_size: Int,
+  expansion: partition.Expansion,
+) -> Nil {
+  let partition.Expansion(partition: current, updated_partition: updated, ..) =
+    expansion
+  io.println(
+    "\nESP32: "
+    <> table_meta.chip_name
+    <> " on "
+    <> port
+    <> "\nDetected flash: "
+    <> table_meta.flash_size_name
+    <> " ("
+    <> partition.hex_address(table_meta.flash_size)
+    <> ")\nBootloader flash size: "
+    <> format_byte_size(bootloader_flash_size)
+    <> "\nmain.avm offset: "
+    <> partition.hex_address(current.offset)
+    <> "\nCurrent size: "
+    <> format_byte_size(current.size)
+    <> "\nExpanded size: "
+    <> format_byte_size(updated.size)
+    <> "\n",
+  )
+}
+
+fn apply_expansion(
+  port: String,
+  table_meta: esp32.FlashRead,
+  bootloader: BitArray,
+  expansion: partition.Expansion,
+) -> Result(Nil, Error) {
+  let outcome = {
+    use directory <- temporary.create(temporary.directory())
+    let bootloader_path = filepath.join(directory, "bootloader.bin")
+    let partition_path = filepath.join(directory, "partition-table.bin")
+
+    use Nil <- result.try(
+      simplifile.write_bits(to: bootloader_path, bits: bootloader)
+      |> result.replace_error(ExpandStagingFailed),
+    )
+    use Nil <- result.try(
+      simplifile.write_bits(to: partition_path, bits: expansion.partition_table)
+      |> result.replace_error(ExpandStagingFailed),
+    )
+    use Nil <- result.try(
+      esp32.write_flash_size_and_partition(
+        port:,
+        bootloader_offset: table_meta.bootloader_offset,
+        bootloader_path:,
+        partition_offset: partition.expected_table_offset(),
+        partition_path:,
+        flash_size_name: table_meta.flash_size_name,
+      )
+      |> result.map_error(Esp32HelperError),
+    )
+
+    use #(header, _) <- result.try(
+      esp32.read_flash_bytes(
+        port:,
+        address: table_meta.bootloader_offset,
+        size: 24,
+        reset_after: True,
+      )
+      |> result.map_error(Esp32HelperError),
+    )
+    use #(table, _) <- result.try(
+      esp32.read_flash_bytes(
+        port:,
+        address: partition.expected_table_offset(),
+        size: partition.expected_table_size(),
+        reset_after: True,
+      )
+      |> result.map_error(Esp32HelperError),
+    )
+    use flash_size_id <- result.try(
+      image_header.flash_size_id(header)
+      |> result.map_error(ExpandImageHeaderError),
+    )
+
+    case
+      flash_size_id == table_meta.flash_size_id
+      && table == expansion.partition_table
+    {
+      True -> Ok(Nil)
+      False -> Error(ExpandVerificationFailed)
+    }
+  }
+
+  case outcome {
+    Ok(result) -> result
+    Error(_) -> Error(ExpandStagingFailed)
+  }
+}
+
+fn format_byte_size(bytes: Int) -> String {
+  int.to_string(bytes) <> " bytes (" <> partition.hex_address(bytes) <> ")"
+}
+
+fn erase_flash(port: Option(String)) -> Nil {
+  let port = esp32.port_or_auto(port)
+  case do_erase_flash(port) {
+    Ok(resolved_port) ->
+      io.println(ansi.magenta(
+        "⚛️  erased the flash on '" <> resolved_port <> "'!",
+      ))
+    Error(error) -> {
+      io.println(error_to_string(error))
+      exit(1)
+    }
+  }
+}
+
+fn do_erase_flash(port: String) -> Result(String, Error) {
+  use resolved_port <- result.try(
+    esp32.select_port(port) |> result.map_error(Esp32HelperError),
+  )
+  io.println(ansi.dim("Erasing flash on '" <> resolved_port <> "'..."))
+  use Nil <- result.try(
+    esp32.erase_flash(resolved_port) |> result.map_error(Esp32HelperError),
+  )
+  Ok(resolved_port)
+}
+
+fn info() -> Nil {
+  case esp32.list_devices() {
+    Ok(devices) -> io.println(esp32.format_info_report(devices))
+    Error(error) -> {
+      io.println(error_to_string(Esp32HelperError(error)))
+      exit(1)
+    }
+  }
 }
 
 fn build(output_file: Option(String)) -> Nil {
@@ -129,7 +464,11 @@ fn list(input_file: Option(String)) -> Nil {
   }
 }
 
-fn do_flash_esp32(port: String, baud: Option(Int)) -> Result(Nil, Error) {
+fn do_flash_esp32(
+  port: Option(String),
+  baud: Option(Int),
+  offset: Option(String),
+) -> Result(Nil, Error) {
   // To flash to an esp device we need esptool to be installed and available in
   // the path!
   use esptool <- result.try(
@@ -141,12 +480,20 @@ fn do_flash_esp32(port: String, baud: Option(Int)) -> Result(Nil, Error) {
     use directory <- temporary.create(temporary.directory())
     let output_path = filepath.join(directory, "build.avm")
     use output_path <- result.try(do_build(Some(output_path)))
+    use offset <- result.try(resolve_offset(
+      esptool,
+      directory,
+      port,
+      baud,
+      offset,
+    ))
 
     // If the root project was compiled successufully we're good to go: we can
     // now pack all the produced `.beam` files into an `.avm` file ready to be
     // flushed into the device.
+    io.println(ansi.dim("Writing main.avm at " <> offset))
     use Nil <- try_step("Flashing the 'avm' file into the device...", fn() {
-      esp_flash_to_device(esptool, output_path, port, baud)
+      esp_flash_to_device(esptool, output_path, port, baud, offset)
     })
     Ok(Nil)
   }
@@ -273,6 +620,14 @@ type Error {
   CannotFlashWithEsptool(esptool_status_code: Int)
   CannotFlashPico(reason: simplifile.FileError)
   EsptoolCannotOpenPort(port: String)
+  CannotReadPartitionTable
+  CannotFindMainPartition
+  Esp32HelperError(reason: esp32.Error)
+  ExpandPartitionError(reason: partition.Error)
+  ExpandImageHeaderError(reason: image_header.Error)
+  InvalidBootloaderOffset
+  ExpandStagingFailed
+  ExpandVerificationFailed
 }
 
 fn error_to_string(error: Error) -> String {
@@ -282,8 +637,19 @@ fn error_to_string(error: Error) -> String {
     EntrypointFunctionHasWrongArity(_) -> "wrong entrypoint function"
     CannotCompileProject -> "invalid Gleam project"
     CannotFindEsptoolExecutable -> "missing 'esptool'"
-    CannotFlashWithEsptool(_) | EsptoolCannotOpenPort(_) | CannotFlashPico(_) ->
-      "cannot flash device"
+    CannotFlashWithEsptool(_)
+    | EsptoolCannotOpenPort(_)
+    | CannotFlashPico(_)
+    | CannotReadPartitionTable
+    | CannotFindMainPartition -> "cannot flash device"
+    Esp32HelperError(esp32.ToolingMissing(_)) -> "missing ESP32 tooling"
+    // Shared by info, erase-flash, expand, and later device commands.
+    Esp32HelperError(esp32.DeviceError(_)) -> "ESP32 device error"
+    ExpandPartitionError(_)
+    | ExpandImageHeaderError(_)
+    | InvalidBootloaderOffset
+    | ExpandStagingFailed
+    | ExpandVerificationFailed -> "cannot expand main.avm"
     OutputFileIsDirectory(_) -> "invalid output file"
     CannotReadAvmFile(_) -> "cannot read the 'avm' file"
 
@@ -344,6 +710,38 @@ fn error_to_string(error: Error) -> String {
       <> "' is busy or doesn't exist.\n"
       <> "Hint: make sure the port is correct and the device connected."
 
+    CannotReadPartitionTable ->
+      "I couldn't read the partition table from the device.\n"
+      <> "Hint: hold BOOT, tap RESET, release BOOT, and try again."
+
+    CannotFindMainPartition ->
+      "The partition table has no main.avm slot.\n"
+      <> "Hint: pass --offset with the address printed in the boot log."
+
+    Esp32HelperError(esp32.ToolingMissing(reason:)) ->
+      reason
+      <> "\nHint: install esptool so Orbital can use its Python environment:\n"
+      <> "https://docs.espressif.com/projects/esptool/en/latest/esp32/installation.html"
+
+    Esp32HelperError(esp32.DeviceError(reason:)) -> reason
+
+    ExpandPartitionError(reason:) -> expand_partition_error_message(reason)
+
+    ExpandImageHeaderError(image_header.InvalidImageHeader) ->
+      "The ESP32 bootloader image header is invalid."
+
+    ExpandImageHeaderError(image_header.UnsupportedFlashSize) ->
+      "The ESP32 bootloader declares an unsupported flash size."
+
+    InvalidBootloaderOffset -> "Esptool returned an invalid bootloader offset."
+
+    ExpandStagingFailed ->
+      "I couldn't prepare the bootloader or partition table for writing.\n"
+      <> bug_report_call_to_action()
+
+    ExpandVerificationFailed ->
+      "Bootloader or partition table verification failed after flashing."
+
     OutputFileIsDirectory(file:) ->
       "'"
       <> file
@@ -388,6 +786,39 @@ fn error_to_string(error: Error) -> String {
   }
 
   error_heading(title) <> "\n" <> body
+}
+
+fn expand_partition_error_message(reason: partition.Error) -> String {
+  case reason {
+    partition.InvalidPartitionTable ->
+      "The ESP32 returned an invalid partition table from flash offset 0x8000."
+    partition.CorruptPartitionData ->
+      "The partition table at flash offset 0x8000 contains corrupt data."
+    partition.PartitionNotFound(name) ->
+      "The device partition table does not contain a " <> name <> " partition."
+    partition.DuplicatePartition(name) ->
+      "The device partition table contains more than one "
+      <> name
+      <> " partition."
+    partition.InvalidPartitionType(name) ->
+      "The " <> name <> " entry is not a data partition."
+    partition.PartitionNotLast(name:, next:) ->
+      "Cannot expand "
+      <> name
+      <> " because partition "
+      <> next
+      <> " follows it.\nExpanding it would overwrite another partition."
+    partition.PartitionExceedsFlash(name) ->
+      "Partition " <> name <> " extends beyond the detected physical flash."
+    partition.OverlappingPartitions(first:, second:) ->
+      "Partitions "
+      <> first
+      <> " and "
+      <> second
+      <> " overlap; refusing to modify the table."
+    partition.InvalidFlashSize ->
+      "Esptool returned an invalid physical flash size."
+  }
 }
 
 fn bug_report_call_to_action() -> String {
@@ -501,24 +932,91 @@ fn packbeam_create(
 @external(erlang, "orbital_ffi", "packbeam_list")
 fn packbeam_list(input_path input_path: String) -> Result(List(String), Nil)
 
+@external(erlang, "orbital_ffi", "monitor")
+fn monitor_serial(
+  port: String,
+  baud: Int,
+  reset: Bool,
+  timeout_seconds: Int,
+) -> Result(Nil, String)
+
+fn resolve_offset(
+  esptool: ExecutablePath,
+  directory: String,
+  port: Option(String),
+  baud: Option(Int),
+  offset: Option(String),
+) -> Result(String, Error) {
+  case offset {
+    Some(offset) -> Ok(offset)
+    None -> read_main_avm_offset(esptool, directory, port, baud)
+  }
+}
+
+fn read_main_avm_offset(
+  esptool: ExecutablePath,
+  directory: String,
+  port: Option(String),
+  baud: Option(Int),
+) -> Result(String, Error) {
+  let table_path = filepath.join(directory, "partition-table.bin")
+  let baud = option.unwrap(baud, default_baud) |> int.to_string
+  let port_arguments = case port {
+    Some(port) -> ["--port", port]
+    None -> []
+  }
+  let outcome =
+    executable.run(
+      esptool,
+      ".",
+      list.append(port_arguments, [
+        "--chip", "auto", "--baud", baud, "read-flash", "--no-progress",
+        "0x8000", "0xC00", table_path,
+      ]),
+    )
+
+  case outcome {
+    Ok(0) ->
+      case simplifile.read_bits(table_path) {
+        Ok(table) ->
+          case partition.main_avm_offset(table) {
+            Ok(offset) -> Ok(partition.hex_address(offset))
+            Error(_) -> Error(CannotFindMainPartition)
+          }
+        Error(_) -> Error(CannotReadPartitionTable)
+      }
+    Ok(2) -> Error(EsptoolCannotOpenPort(option.unwrap(port, "auto")))
+    Ok(_) -> Error(CannotReadPartitionTable)
+    Error(_) -> Error(CannotSpawnEsptool)
+  }
+}
+
 fn esp_flash_to_device(
   esptool: ExecutablePath,
   output_path: String,
-  port: String,
+  port: Option(String),
   baud: Option(Int),
+  offset: String,
 ) -> Result(Nil, Error) {
   let baud = option.unwrap(baud, default_baud) |> int.to_string
+  let port_arguments = case port {
+    Some(port) -> ["--port", port]
+    None -> []
+  }
   let outcome =
-    executable.run(esptool, ".", [
-      "--chip", "auto", "--port", port, "--baud", baud, "--before",
-      "default-reset", "--after", "hard-reset", "write-flash", "-u",
-      "--flash-mode", "keep", "--flash-freq", "keep", "--flash-size", "detect",
-      "0x210000", output_path,
-    ])
+    executable.run(
+      esptool,
+      ".",
+      list.append(port_arguments, [
+        "--chip", "auto", "--baud", baud, "--before", "default-reset", "--after",
+        "hard-reset", "write-flash", "-u", "--flash-mode", "keep",
+        "--flash-freq", "keep", "--flash-size", "detect", offset, output_path,
+      ]),
+    )
 
   case outcome {
     Ok(0) -> Ok(Nil)
-    Ok(2) -> Error(EsptoolCannotOpenPort(port))
+    Ok(2) -> Error(EsptoolCannotOpenPort(option.unwrap(port, "auto")))
     Ok(n) -> Error(CannotFlashWithEsptool(n))
     Error(_) -> Error(CannotSpawnEsptool)
   }
