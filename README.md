@@ -28,11 +28,12 @@ pub fn start() {
 }
 ```
 
-To build and flash it to a device with the AtomVM firmware installed you can
-run:
+Install AtomVM on the board once, then build/flash your app and watch the
+console:
 
 ```sh
 gleam run -m orbital info
+gleam run -m orbital install
 gleam run -m orbital flash esp32
 gleam run -m orbital expand
 gleam run -m orbital monitor
@@ -40,6 +41,12 @@ gleam run -m orbital erase-flash
 ```
 
 `info` lists connected ESP32 boards and whether AtomVM is already installed.
+
+`install` downloads the latest AtomVM release (or a local `--image` / release
+`--version`), erases flash, and writes the firmware. Use `--update` later to
+replace only the VM and `boot.avm` while keeping NVS and `main.avm`.
+`--list-images` shows published and cached images; downloads land in
+`firmware_images/`.
 
 `flash` reads the device partition table and writes the application at the
 `main.avm` address. Pass `--offset 0x2b8000` to choose an address yourself.
@@ -73,7 +80,8 @@ gleam run -m orbital help
 
 - **How can I install AtomVM?**
 
-  To install AtomVM on a device check the
+  Prefer `gleam run -m orbital install` (or `install --list-images` to pick a
+  build). You can also follow the
   [getting started guide.](https://doc.atomvm.org/latest/getting-started-guide.html)
 
 - **Can I run any Gleam program on AtomVM?**

@@ -8,10 +8,16 @@
     monitor/4,
     esp32_list_devices/0,
     esp32_select_port/1,
+    esp32_select_device/1,
     esp32_erase_flash/1,
     esp32_read_flash/5,
     esp32_write_flash_data/3,
-    esp32_write_flash_size_and_partition/6
+    esp32_write_flash_image/4,
+    esp32_write_flash_parts/3,
+    esp32_write_flash_size_and_partition/6,
+    confirm/1,
+    zip_list/1,
+    zip_get/2
 ]).
 
 packbeam_create(OutputPath, StartModule, Files) ->
@@ -110,6 +116,9 @@ esp32_list_devices() ->
 esp32_select_port(Port) ->
     run_esp32_json([<<"select-port">>, <<"--port">>, Port]).
 
+esp32_select_device(Port) ->
+    run_esp32_json([<<"select-device">>, <<"--port">>, Port]).
+
 esp32_erase_flash(Port) ->
     case run_esp32_collect([<<"erase-flash">>, <<"--port">>, Port]) of
         {ok, _Stdout} -> {ok, nil};
@@ -141,6 +150,35 @@ esp32_write_flash_data(Port, Address, FilePath) ->
         {error, Reason} -> {error, Reason}
     end.
 
+esp32_write_flash_image(Port, Baud, Address, FilePath) ->
+    case run_esp32_collect([
+        <<"write-flash-image">>,
+        <<"--port">>, Port,
+        <<"--baud">>, integer_to_binary(Baud),
+        <<"--address">>, integer_to_binary(Address),
+        <<"--file">>, FilePath
+    ]) of
+        {ok, _Stdout} -> {ok, nil};
+        {error, Reason} -> {error, Reason}
+    end.
+
+%% Parts is a list of {Address :: integer(), FilePath :: binary()}.
+
+esp32_write_flash_parts(Port, Baud, Parts) ->
+    PartArgs = lists:append([
+        [<<"--part">>, <<(integer_to_binary(Address))/binary, ":", FilePath/binary>>]
+     || {Address, FilePath} <- Parts
+    ]),
+    case run_esp32_collect([
+        <<"write-flash-parts">>,
+        <<"--port">>, Port,
+        <<"--baud">>, integer_to_binary(Baud)
+        | PartArgs
+    ]) of
+        {ok, _Stdout} -> {ok, nil};
+        {error, Reason} -> {error, Reason}
+    end.
+
 esp32_write_flash_size_and_partition(
     Port,
     BootloaderOffset,
@@ -160,6 +198,54 @@ esp32_write_flash_size_and_partition(
     ]) of
         {ok, _Stdout} -> {ok, nil};
         {error, Reason} -> {error, Reason}
+    end.
+
+confirm(Prompt) ->
+    io:put_chars(Prompt),
+    case io:get_line("") of
+        eof -> false;
+        {error, _} -> false;
+        Line ->
+            case string:trim(Line) of
+                "Y" -> true;
+                "y" -> true;
+                _ -> false
+            end
+    end.
+
+%% List member names inside a zip (OTP zip, memory mode).
+
+zip_list(ZipPath) ->
+    case zip:zip_open(unsafe_characters_to_list(ZipPath), [memory]) of
+        {ok, Handle} ->
+            try zip:zip_list_dir(Handle) of
+                {ok, Entries} ->
+                    Names = [unsafe_characters_to_binary(Name)
+                             || {zip_file, Name, _Info, _Comment, _Offset, _CompSize} <- Entries],
+                    {ok, Names};
+                {error, Reason} ->
+                    {error, iolist_to_binary(io_lib:format("~p", [Reason]))}
+            after
+                zip:zip_close(Handle)
+            end;
+        {error, Reason} ->
+            {error, iolist_to_binary(io_lib:format("~p", [Reason]))}
+    end.
+
+%% Read one zip member into a binary.
+
+zip_get(ZipPath, Member) ->
+    case zip:zip_open(unsafe_characters_to_list(ZipPath), [memory]) of
+        {ok, Handle} ->
+            try zip:zip_get(unsafe_characters_to_list(Member), Handle) of
+                {ok, {_Name, Bin}} when is_binary(Bin) -> {ok, Bin};
+                {error, Reason} ->
+                    {error, iolist_to_binary(io_lib:format("~p", [Reason]))}
+            after
+                zip:zip_close(Handle)
+            end;
+        {error, Reason} ->
+            {error, iolist_to_binary(io_lib:format("~p", [Reason]))}
     end.
 
 run_esp32_json(Args) ->

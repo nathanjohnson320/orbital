@@ -78,6 +78,39 @@ pub fn select_port(port: String) -> Result(String, Error) {
   }
 }
 
+/// Resolve a port and return the matching probed device record.
+pub fn select_device(port: String) -> Result(Device, Error) {
+  use raw <- result.try(select_device_ffi(port) |> map_ffi_error)
+  case json.parse(raw, device_decoder()) {
+    Ok(device) -> Ok(device)
+    Error(_) ->
+      Error(DeviceError(
+        reason: "ESP32 helper select-device returned invalid JSON.",
+      ))
+  }
+}
+
+/// Flash a full firmware `.img` at `address` using esptool's write-flash.
+pub fn write_flash_image(
+  port port: String,
+  baud baud: Int,
+  address address: Int,
+  file_path file_path: String,
+) -> Result(Nil, Error) {
+  write_flash_image_ffi(port, baud, address, file_path)
+  |> map_ffi_error
+}
+
+/// Flash multiple `(address, file)` parts in one esptool write-flash call.
+pub fn write_flash_parts(
+  port port: String,
+  baud baud: Int,
+  parts parts: List(#(Int, String)),
+) -> Result(Nil, Error) {
+  write_flash_parts_ffi(port, baud, parts)
+  |> map_ffi_error
+}
+
 /// Erase the entire flash of the device at `port` (`"auto"` allowed).
 pub fn erase_flash(port: String) -> Result(Nil, Error) {
   erase_flash_ffi(port)
@@ -387,6 +420,9 @@ fn list_devices_ffi() -> Result(String, String)
 @external(erlang, "orbital_ffi", "esp32_select_port")
 fn select_port_ffi(port: String) -> Result(String, String)
 
+@external(erlang, "orbital_ffi", "esp32_select_device")
+fn select_device_ffi(port: String) -> Result(String, String)
+
 @external(erlang, "orbital_ffi", "esp32_erase_flash")
 fn erase_flash_ffi(port: String) -> Result(Nil, String)
 
@@ -404,6 +440,21 @@ fn write_flash_data_ffi(
   port: String,
   address: Int,
   file_path: String,
+) -> Result(Nil, String)
+
+@external(erlang, "orbital_ffi", "esp32_write_flash_image")
+fn write_flash_image_ffi(
+  port: String,
+  baud: Int,
+  address: Int,
+  file_path: String,
+) -> Result(Nil, String)
+
+@external(erlang, "orbital_ffi", "esp32_write_flash_parts")
+fn write_flash_parts_ffi(
+  port: String,
+  baud: Int,
+  parts: List(#(Int, String)),
 ) -> Result(Nil, String)
 
 @external(erlang, "orbital_ffi", "esp32_write_flash_size_and_partition")
