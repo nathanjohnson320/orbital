@@ -11,6 +11,7 @@
   Parity fixes vs ExAtomVM: exact-chip Elixir release selection, factory zip
   bundle verification + FLASH.txt update parts, reject `--download-only` with a
   local path, and richer `--list-images` rendering.
+- Orbital now has an `erase-flash` command to wipe an ESP32 board's flash.
 - Added shared ESP32 device helpers (`orbital/internal/esp32`) backed by
   `priv/esp32.py` for listing devices, selecting a port, erasing flash, and
   reading/writing flash regions.
