@@ -5,7 +5,9 @@
 - Added `install` to download/install/update AtomVM on ESP32 boards
   (`--image`, `--version`, `--repo`, `--update`, `--download-only`,
   `--list-images`, `--chip`, `--port`, `--baud`), with firmware caching under
-  `firmware_images/` and ExAtomVM-compatible update guardrails.
+  `firmware_images/` and ExAtomVM-compatible update guardrails. Listing and
+  download use Gleam (`gleam_httpc` / `gleam_json`); only zip member reads and
+  ESP32 device I/O still go through thin Erlang / `priv/esp32.py` helpers.
 - Added shared ESP32 device helpers (`orbital/internal/esp32`) backed by
   `priv/esp32.py` for listing devices, selecting a port, erasing flash, and
   reading/writing flash regions.

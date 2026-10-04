@@ -1,12 +1,10 @@
 //// `orbital install` orchestration: resolve images, confirm, erase/flash,
-//// and apply `--update` guardrails. Network listing/download is delegated to
-//// `priv/firmware.py`; device I/O uses `orbital/internal/esp32`.
+//// and apply `--update` guardrails. Image listing/download is Gleam
+//// (`firmware_fetch` + `gleam_httpc`); device I/O uses `orbital/internal/esp32`.
 
 import filepath
-import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/io
-import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
@@ -14,6 +12,7 @@ import gleam/string
 import gleam_community/ansi
 import orbital/internal/esp32
 import orbital/internal/firmware
+import orbital/internal/firmware_fetch
 import simplifile
 
 pub type Mode {
@@ -60,22 +59,13 @@ fn list_images(options: Options) -> Result(Nil, Error) {
       devices
       |> list.map(fn(d) { firmware.chip_token(d.chip_family_name) })
       |> list.unique
-      |> string.join(with: ",")
-    Error(_) -> ""
+    Error(_) -> []
   }
   use text <- result.try(
-    list_images_ffi(
-      option.unwrap(options.chip, ""),
-      option.unwrap(options.repo, ""),
-      connected,
-    )
-    |> map_tool_error,
+    firmware_fetch.list_images_text(options.chip, options.repo, connected)
+    |> map_firmware_error,
   )
-  io.print(text)
-  case string.ends_with(text, "\n") {
-    True -> Nil
-    False -> io.println("")
-  }
+  io.println(text)
   Ok(Nil)
 }
 
@@ -104,8 +94,7 @@ fn install_or_update(options: Options) -> Result(Nil, Error) {
   use image <- result.try(resolve_for_device(options, chip))
   use Nil <- result.try(check_chip(image, chip, device))
   use offset <- result.try(
-    firmware.flash_offset_for(image, chip)
-    |> result.map_error(fn(e) { FirmwareError(firmware.error_message(e)) }),
+    firmware.flash_offset_for(image, chip) |> map_firmware_error,
   )
 
   case mode {
@@ -121,18 +110,18 @@ fn do_install(
   offset: Int,
   baud: Int,
 ) -> Result(Nil, Error) {
-  use path <- result.try(
-    firmware.image_path(image)
-    |> result.map_error(fn(e) { FirmwareError(firmware.error_message(e)) }),
-  )
+  use path <- result.try(firmware.image_path(image) |> map_firmware_error)
   use Nil <- result.try(confirm_install(device, image, chip, offset))
   io.println("Erasing and flashing")
-  use Nil <- result.try(
-    esp32.erase_flash(device.port) |> map_esp32_error,
-  )
+  use Nil <- result.try(esp32.erase_flash(device.port) |> map_esp32_error)
   process.sleep(3000)
   use Nil <- result.try(
-    esp32.write_flash_image(port: device.port, baud:, address: offset, file_path: path)
+    esp32.write_flash_image(
+      port: device.port,
+      baud:,
+      address: offset,
+      file_path: path,
+    )
     |> map_esp32_error,
   )
   io.println("")
@@ -163,10 +152,7 @@ fn do_update(
   case device.atomvm_installed {
     False -> Error(FirmwareError(firmware.error_message(firmware.NotInstalled)))
     True -> {
-      use path <- result.try(
-        firmware.image_path(image)
-        |> result.map_error(fn(e) { FirmwareError(firmware.error_message(e)) }),
-      )
+      use path <- result.try(firmware.image_path(image) |> map_firmware_error)
       use img_bytes <- result.try(
         simplifile.read_bits(path)
         |> result.map_error(fn(_) {
@@ -174,8 +160,7 @@ fn do_update(
         }),
       )
       use parts <- result.try(
-        firmware.slice_image(img_bytes, offset)
-        |> result.map_error(fn(e) { FirmwareError(firmware.error_message(e)) }),
+        firmware.slice_image(img_bytes, offset) |> map_firmware_error,
       )
       use #(board_table, table_meta) <- result.try(
         esp32.read_flash_bytes(
@@ -202,13 +187,19 @@ fn do_update(
           esp32.byte_size(parts.app),
           esp32.byte_size(parts.lib),
         )
-        |> result.map_error(fn(e) { FirmwareError(firmware.error_message(e)) }),
+        |> map_firmware_error,
       )
       use bootloaders <- result.try(
         firmware.check_bootloader(board_bootloader, parts.bootloader)
-        |> result.map_error(fn(e) { FirmwareError(firmware.error_message(e)) }),
+        |> map_firmware_error,
       )
-      use Nil <- result.try(confirm_update(device, image, chip, parts, bootloaders))
+      use Nil <- result.try(confirm_update(
+        device,
+        image,
+        chip,
+        parts,
+        bootloaders,
+      ))
       io.println("Updating")
       use directory <- result.try(
         simplifile.create_directory_all("_build/atomvm_update")
@@ -259,28 +250,16 @@ fn resolve_for_download(options: Options) -> Result(firmware.Image, Error) {
     Some(image), None ->
       case firmware.classify_image_arg(image, option.is_some(options.repo)) {
         Ok(firmware.PathArg(path)) ->
-          ensure(mode: "path", chip: "", version: "", name: "", path:, repo: options.repo)
+          firmware_fetch.ensure_path(path) |> map_firmware_error
         Ok(firmware.NameArg(parsed)) ->
-          ensure(
-            mode: "name",
-            chip: "",
-            version: "",
-            name: parsed.name,
-            path: "",
-            repo: options.repo,
-          )
+          firmware_fetch.ensure_name(parsed.name, options.repo)
+          |> map_firmware_error
         Error(error) -> Error(FirmwareError(firmware.error_message(error)))
       }
     None, version -> {
       use chip <- result.try(download_chip(options))
-      ensure(
-        mode: "release",
-        chip:,
-        version: option.unwrap(version, ""),
-        name: "",
-        path: "",
-        repo: options.repo,
-      )
+      firmware_fetch.ensure_release(chip, version, options.repo)
+      |> map_firmware_error
     }
     Some(_), Some(_) ->
       Error(Validation("--image and --version cannot be used together"))
@@ -295,16 +274,10 @@ fn resolve_for_device(
     Some(image), None ->
       case firmware.classify_image_arg(image, option.is_some(options.repo)) {
         Ok(firmware.PathArg(path)) ->
-          ensure(mode: "path", chip: "", version: "", name: "", path:, repo: options.repo)
+          firmware_fetch.ensure_path(path) |> map_firmware_error
         Ok(firmware.NameArg(parsed)) ->
-          ensure(
-            mode: "name",
-            chip:,
-            version: "",
-            name: parsed.name,
-            path: "",
-            repo: options.repo,
-          )
+          firmware_fetch.ensure_name(parsed.name, options.repo)
+          |> map_firmware_error
         Error(error) -> Error(FirmwareError(firmware.error_message(error)))
       }
     None, version -> {
@@ -315,14 +288,8 @@ fn resolve_for_device(
           )
         Some(_) -> Nil
       }
-      ensure(
-        mode: "release",
-        chip:,
-        version: option.unwrap(version, ""),
-        name: "",
-        path: "",
-        repo: options.repo,
-      )
+      firmware_fetch.ensure_release(chip, version, options.repo)
+      |> map_firmware_error
     }
     Some(_), Some(_) ->
       Error(Validation("--image and --version cannot be used together"))
@@ -467,106 +434,15 @@ fn ask(prompt: String) -> Result(Nil, Error) {
   }
 }
 
-fn ensure(
-  mode mode: String,
-  chip chip: String,
-  version version: String,
-  name name: String,
-  path path: String,
-  repo repo: Option(String),
-) -> Result(firmware.Image, Error) {
-  use raw <- result.try(
-    ensure_ffi(mode, chip, version, name, path, option.unwrap(repo, ""))
-    |> map_tool_error,
-  )
-  case json.parse(raw, image_decoder()) {
-    Ok(image) -> Ok(image)
-    Error(_) ->
-      Error(FirmwareError("firmware helper returned invalid image JSON."))
-  }
-}
-
-fn image_decoder() -> decode.Decoder(firmware.Image) {
-  use name <- decode.field("name", decode.string)
-  use file <- decode.optional_field("file", None, decode.optional(decode.string))
-  use kind_s <- decode.optional_field("kind", "img", decode.string)
-  use chip <- decode.optional_field("chip", None, decode.optional(decode.string))
-  use base_chip <- decode.optional_field(
-    "base_chip",
-    None,
-    decode.optional(decode.string),
-  )
-  use elixir <- decode.optional_field(
-    "elixir",
-    None,
-    decode.optional(decode.bool),
-  )
-  use features <- decode.optional_field(
-    "features",
-    [],
-    decode.list(decode.string),
-  )
-  use version <- decode.optional_field(
-    "version",
-    None,
-    decode.optional(decode.string),
-  )
-  use channel_s <- decode.optional_field("channel", "local", decode.string)
-  use stamp <- decode.optional_field("stamp", None, decode.optional(decode.string))
-  use path <- decode.optional_field("path", None, decode.optional(decode.string))
-  use img_path <- decode.optional_field(
-    "img_path",
-    None,
-    decode.optional(decode.string),
-  )
-  use flash_offset <- decode.optional_field(
-    "flash_offset",
-    None,
-    decode.optional(decode.int),
-  )
-  decode.success(firmware.Image(
-    name:,
-    file:,
-    kind: case kind_s {
-      "zip" -> firmware.Zip
-      _ -> firmware.Img
-    },
-    chip:,
-    base_chip:,
-    elixir:,
-    features:,
-    version:,
-    channel: channel_from_string(channel_s),
-    stamp:,
-    path:,
-    img_path:,
-    flash_offset:,
-  ))
-}
-
-fn channel_from_string(value: String) -> firmware.Channel {
-  case value {
-    "stable" -> firmware.Stable
-    "prerelease" -> firmware.Prerelease
-    "nightly" -> firmware.Nightly
-    "custom" -> firmware.Custom
-    _ -> firmware.Local
-  }
-}
-
 fn write_bits(path: String, data: BitArray) -> Result(Nil, Error) {
   simplifile.write_bits(to: path, bits: data)
   |> result.map_error(fn(_) { FirmwareError("Could not write " <> path) })
 }
 
-fn map_tool_error(result: Result(a, String)) -> Result(a, Error) {
+fn map_firmware_error(result: Result(a, firmware.Error)) -> Result(a, Error) {
   case result {
     Ok(value) -> Ok(value)
-    Error(reason) ->
-      case string.contains(string.lowercase(reason), "cannot find") {
-        True -> Error(ToolingMissing(reason))
-        False -> Error(FirmwareError(reason))
-      }
+    Error(error) -> Error(FirmwareError(firmware.error_message(error)))
   }
 }
 
@@ -586,29 +462,13 @@ fn map_esp32_error_value(error: esp32.Error) -> Error {
 
 pub fn error_message(error: Error) -> String {
   case error {
-    FirmwareError(reason) | DeviceError(reason) | ToolingMissing(reason) | Validation(
-      reason,
-    ) -> reason
+    FirmwareError(reason)
+    | DeviceError(reason)
+    | ToolingMissing(reason)
+    | Validation(reason) -> reason
     Cancelled -> ""
   }
 }
-
-@external(erlang, "orbital_ffi", "firmware_list_images")
-fn list_images_ffi(
-  chip: String,
-  repo: String,
-  connected_chips: String,
-) -> Result(String, String)
-
-@external(erlang, "orbital_ffi", "firmware_ensure")
-fn ensure_ffi(
-  mode: String,
-  chip: String,
-  version: String,
-  name: String,
-  path: String,
-  repo: String,
-) -> Result(String, String)
 
 @external(erlang, "orbital_ffi", "confirm")
 fn confirm_ffi(prompt: String) -> Bool

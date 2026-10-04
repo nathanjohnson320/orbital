@@ -14,9 +14,9 @@
     esp32_write_flash_data/3,
     esp32_write_flash_image/4,
     esp32_write_flash_parts/3,
-    firmware_list_images/3,
-    firmware_ensure/6,
-    confirm/1
+    confirm/1,
+    zip_list/1,
+    zip_get/2
 ]).
 
 packbeam_create(OutputPath, StartModule, Files) ->
@@ -177,36 +177,6 @@ esp32_write_flash_parts(Port, Baud, Parts) ->
         {error, Reason} -> {error, Reason}
     end.
 
-%% Chip may be <<>> meaning omitted; Repo may be <<>> meaning omitted.
-firmware_list_images(Chip, Repo, ConnectedChips) ->
-    Args = [<<"list-images">>]
-        ++ case Chip of <<>> -> []; _ -> [<<"--chip">>, Chip] end
-        ++ case Repo of <<>> -> []; _ -> [<<"--repo">>, Repo] end
-        ++ case ConnectedChips of
-            <<>> -> [];
-            _ -> [<<"--connected-chips">>, ConnectedChips]
-        end,
-    case run_firmware_collect(Args) of
-        {ok, Stdout} -> {ok, Stdout};
-        {error, Reason} -> {error, Reason}
-    end.
-
-%% Mode is <<"release">> | <<"name">> | <<"path">>.
-%% Optional binaries may be <<>> when omitted.
-firmware_ensure(Mode, Chip, Version, Name, Path, Repo) ->
-    Args = [
-        <<"ensure">>, <<"--mode">>, Mode
-        | optional_arg(<<"--chip">>, Chip)
-        ++ optional_arg(<<"--version">>, Version)
-        ++ optional_arg(<<"--name">>, Name)
-        ++ optional_arg(<<"--path">>, Path)
-        ++ optional_arg(<<"--repo">>, Repo)
-    ],
-    run_firmware_json(Args).
-
-optional_arg(_Flag, <<>>) -> [];
-optional_arg(Flag, Value) -> [Flag, Value].
-
 confirm(Prompt) ->
     io:put_chars(Prompt),
     case io:get_line("") of
@@ -220,21 +190,37 @@ confirm(Prompt) ->
             end
     end.
 
-run_firmware_json(Args) ->
-    case run_firmware_collect(Args) of
-        {error, Reason} -> {error, Reason};
-        {ok, Stdout} -> {ok, first_json_line(Stdout)}
+%% List member names inside a zip (OTP zip, memory mode).
+zip_list(ZipPath) ->
+    case zip:zip_open(unsafe_characters_to_list(ZipPath), [memory]) of
+        {ok, Handle} ->
+            try zip:zip_list_dir(Handle) of
+                {ok, Entries} ->
+                    Names = [unsafe_characters_to_binary(Name)
+                             || {zip_file, Name, _Info, _Comment, _Offset, _CompSize} <- Entries],
+                    {ok, Names};
+                {error, Reason} ->
+                    {error, iolist_to_binary(io_lib:format("~p", [Reason]))}
+            after
+                zip:zip_close(Handle)
+            end;
+        {error, Reason} ->
+            {error, iolist_to_binary(io_lib:format("~p", [Reason]))}
     end.
 
-run_firmware_collect(Args) ->
-    case interpreter() of
-        {error, Reason} -> {error, Reason};
-        {ok, Python} ->
-            case priv_script(<<"firmware.py">>) of
-                {error, Reason} -> {error, Reason};
-                {ok, Script} ->
-                    collect_output(Python, [<<"-u">>, Script | Args])
-            end
+%% Read one zip member into a binary.
+zip_get(ZipPath, Member) ->
+    case zip:zip_open(unsafe_characters_to_list(ZipPath), [memory]) of
+        {ok, Handle} ->
+            try zip:zip_get(unsafe_characters_to_list(Member), Handle) of
+                {ok, {_Name, Bin}} when is_binary(Bin) -> {ok, Bin};
+                {error, Reason} ->
+                    {error, iolist_to_binary(io_lib:format("~p", [Reason]))}
+            after
+                zip:zip_close(Handle)
+            end;
+        {error, Reason} ->
+            {error, iolist_to_binary(io_lib:format("~p", [Reason]))}
     end.
 
 run_esp32_json(Args) ->

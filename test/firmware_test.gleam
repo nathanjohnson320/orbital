@@ -2,6 +2,7 @@ import gleam/bit_array
 import gleam/option.{None, Some}
 import gleeunit
 import orbital/internal/firmware
+import orbital/internal/firmware_fetch
 import simplifile
 
 pub fn main() -> Nil {
@@ -57,6 +58,12 @@ pub fn flash_offset_for_known_chips_test() {
       path: None,
       img_path: None,
       flash_offset: None,
+      url: None,
+      size: None,
+      sha256: None,
+      sha256_url: None,
+      tag: None,
+      source: None,
     )
   let assert Ok(0x0) = firmware.flash_offset_for(image, "esp32s3")
   let assert Ok(0x1000) = firmware.flash_offset_for(image, "esp32")
@@ -94,6 +101,17 @@ pub fn parse_repo_arg_test() {
   let assert Ok("acme/builds") =
     firmware.parse_repo_arg("https://github.com/acme/builds.git")
   let assert Error(firmware.InvalidRepo(_)) = firmware.parse_repo_arg("nope")
+}
+
+pub fn ensure_path_local_img_test() {
+  let path = "build/test-ensure-path.img"
+  let assert Ok(Nil) = simplifile.create_directory_all("build")
+  let assert Ok(Nil) = simplifile.write(to: path, contents: "img-bytes")
+  let assert Ok(image) = firmware_fetch.ensure_path(path)
+  assert image.path == Some(path)
+  assert image.source == Some(firmware.LocalSource)
+  assert image.size == Some(9)
+  let _ = simplifile.delete(path)
 }
 
 pub fn compare_bootloader_refuses_newer_board_test() {

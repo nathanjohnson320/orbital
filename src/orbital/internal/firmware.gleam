@@ -1,9 +1,9 @@
 //// AtomVM ESP32 firmware image naming, offsets, and update planning.
 ////
-//// Mirrors the pure parts of ExAtomVM's `Esp32FirmwareImages`: classifying
-//// `--image` arguments, chip tokens, flash offsets, slicing `factory` /
-//// `boot.avm` for `--update`, and bootloader ESP-IDF guardrails. Network
-//// listing and download live in `priv/firmware.py`.
+//// Mirrors ExAtomVM's `Esp32FirmwareImages`: classifying `--image` arguments,
+//// chip tokens, flash offsets, slicing `factory` / `boot.avm` for `--update`,
+//// and bootloader ESP-IDF guardrails. GitHub listing/download/cache lives in
+//// `orbital/internal/firmware_fetch`.
 
 import gleam/bit_array
 import gleam/int
@@ -36,6 +36,16 @@ pub type Kind {
   Zip
 }
 
+/// Where an image came from (GitHub source, cache, or local path).
+pub type Source {
+  Atomvm
+  Factory
+  CustomRepo(String)
+  Cache
+  Build
+  LocalSource
+}
+
 /// A firmware image descriptor (local path, cache entry, or published name).
 pub type Image {
   Image(
@@ -52,6 +62,12 @@ pub type Image {
     path: Option(String),
     img_path: Option(String),
     flash_offset: Option(Int),
+    url: Option(String),
+    size: Option(Int),
+    sha256: Option(String),
+    sha256_url: Option(String),
+    tag: Option(String),
+    source: Option(Source),
   )
 }
 
@@ -93,6 +109,9 @@ pub type Error {
   NotInstalled
   BootloaderNewer(board: String, image: String)
   FileError(String)
+  Network(String)
+  UnknownImage(String)
+  ReleaseNotFound(String)
 }
 
 /// Parse `AtomVM-<chip>[-elixir][-features...]-<version>[+stamp][.img|.zip]`.
@@ -131,6 +150,12 @@ pub fn parse_name(name_or_path: String) -> Result(Image, Error) {
                 path: None,
                 img_path: None,
                 flash_offset: None,
+                url: None,
+                size: None,
+                sha256: None,
+                sha256_url: None,
+                tag: None,
+                source: None,
               ))
             }
           }
@@ -414,6 +439,10 @@ pub fn error_message(error: Error) -> String {
       <> image
       <> "); update refused."
     FileError(reason) -> reason
+    Network(reason) -> reason
+    UnknownImage(name) ->
+      "Unknown image '" <> name <> "'. List them with --list-images."
+    ReleaseNotFound(tag) -> "Release not found: " <> tag
   }
 }
 
@@ -445,6 +474,12 @@ fn file_image(file: String) -> Image {
         path: None,
         img_path: None,
         flash_offset: None,
+        url: None,
+        size: None,
+        sha256: None,
+        sha256_url: None,
+        tag: None,
+        source: Some(LocalSource),
       )
     }
   }
