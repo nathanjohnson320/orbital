@@ -8,9 +8,15 @@
     monitor/4,
     esp32_list_devices/0,
     esp32_select_port/1,
+    esp32_select_device/1,
     esp32_erase_flash/1,
     esp32_read_flash/5,
-    esp32_write_flash_data/3
+    esp32_write_flash_data/3,
+    esp32_write_flash_image/4,
+    esp32_write_flash_parts/3,
+    firmware_list_images/3,
+    firmware_ensure/6,
+    confirm/1
 ]).
 
 packbeam_create(OutputPath, StartModule, Files) ->
@@ -109,6 +115,9 @@ esp32_list_devices() ->
 esp32_select_port(Port) ->
     run_esp32_json([<<"select-port">>, <<"--port">>, Port]).
 
+esp32_select_device(Port) ->
+    run_esp32_json([<<"select-device">>, <<"--port">>, Port]).
+
 esp32_erase_flash(Port) ->
     case run_esp32_collect([<<"erase-flash">>, <<"--port">>, Port]) of
         {ok, _Stdout} -> {ok, nil};
@@ -138,6 +147,94 @@ esp32_write_flash_data(Port, Address, FilePath) ->
     ]) of
         {ok, _Stdout} -> {ok, nil};
         {error, Reason} -> {error, Reason}
+    end.
+
+esp32_write_flash_image(Port, Baud, Address, FilePath) ->
+    case run_esp32_collect([
+        <<"write-flash-image">>,
+        <<"--port">>, Port,
+        <<"--baud">>, integer_to_binary(Baud),
+        <<"--address">>, integer_to_binary(Address),
+        <<"--file">>, FilePath
+    ]) of
+        {ok, _Stdout} -> {ok, nil};
+        {error, Reason} -> {error, Reason}
+    end.
+
+%% Parts is a list of {Address :: integer(), FilePath :: binary()}.
+esp32_write_flash_parts(Port, Baud, Parts) ->
+    PartArgs = lists:append([
+        [<<"--part">>, <<(integer_to_binary(Address))/binary, ":", FilePath/binary>>]
+     || {Address, FilePath} <- Parts
+    ]),
+    case run_esp32_collect([
+        <<"write-flash-parts">>,
+        <<"--port">>, Port,
+        <<"--baud">>, integer_to_binary(Baud)
+        | PartArgs
+    ]) of
+        {ok, _Stdout} -> {ok, nil};
+        {error, Reason} -> {error, Reason}
+    end.
+
+%% Chip may be <<>> meaning omitted; Repo may be <<>> meaning omitted.
+firmware_list_images(Chip, Repo, ConnectedChips) ->
+    Args = [<<"list-images">>]
+        ++ case Chip of <<>> -> []; _ -> [<<"--chip">>, Chip] end
+        ++ case Repo of <<>> -> []; _ -> [<<"--repo">>, Repo] end
+        ++ case ConnectedChips of
+            <<>> -> [];
+            _ -> [<<"--connected-chips">>, ConnectedChips]
+        end,
+    case run_firmware_collect(Args) of
+        {ok, Stdout} -> {ok, Stdout};
+        {error, Reason} -> {error, Reason}
+    end.
+
+%% Mode is <<"release">> | <<"name">> | <<"path">>.
+%% Optional binaries may be <<>> when omitted.
+firmware_ensure(Mode, Chip, Version, Name, Path, Repo) ->
+    Args = [
+        <<"ensure">>, <<"--mode">>, Mode
+        | optional_arg(<<"--chip">>, Chip)
+        ++ optional_arg(<<"--version">>, Version)
+        ++ optional_arg(<<"--name">>, Name)
+        ++ optional_arg(<<"--path">>, Path)
+        ++ optional_arg(<<"--repo">>, Repo)
+    ],
+    run_firmware_json(Args).
+
+optional_arg(_Flag, <<>>) -> [];
+optional_arg(Flag, Value) -> [Flag, Value].
+
+confirm(Prompt) ->
+    io:put_chars(Prompt),
+    case io:get_line("") of
+        eof -> false;
+        {error, _} -> false;
+        Line ->
+            case string:trim(Line) of
+                "Y" -> true;
+                "y" -> true;
+                _ -> false
+            end
+    end.
+
+run_firmware_json(Args) ->
+    case run_firmware_collect(Args) of
+        {error, Reason} -> {error, Reason};
+        {ok, Stdout} -> {ok, first_json_line(Stdout)}
+    end.
+
+run_firmware_collect(Args) ->
+    case interpreter() of
+        {error, Reason} -> {error, Reason};
+        {ok, Python} ->
+            case priv_script(<<"firmware.py">>) of
+                {error, Reason} -> {error, Reason};
+                {ok, Script} ->
+                    collect_output(Python, [<<"-u">>, Script | Args])
+            end
     end.
 
 run_esp32_json(Args) ->
