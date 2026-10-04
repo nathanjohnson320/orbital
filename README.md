@@ -32,11 +32,15 @@ Install AtomVM on the board once, then build/flash your app and watch the
 console:
 
 ```sh
+gleam run -m orbital info
 gleam run -m orbital install
 gleam run -m orbital flash esp32
+gleam run -m orbital expand
 gleam run -m orbital monitor
 gleam run -m orbital erase-flash
 ```
+
+`info` lists connected ESP32 boards and whether AtomVM is already installed.
 
 `install` downloads the latest AtomVM release (or a local `--image` / release
 `--version`), erases flash, and writes the firmware. Use `--update` later to
@@ -48,6 +52,10 @@ replace only the VM and `boot.avm` while keeping NVS and `main.avm`.
 `main.avm` address. Pass `--offset 0x2b8000` to choose an address yourself.
 Esptool auto-detects the serial port; pass `--port /dev/some_device` when more
 than one board is connected.
+
+`expand` grows the final `main.avm` partition to the end of the detected flash
+and updates the bootloader flash-size header when needed. Use it when an app
+no longer fits the stock `main.avm` slot.
 
 `monitor` reads the serial console for 10 seconds. `--timeout 0` reads until
 Ctrl+C, pressed twice. The port is chosen when only one USB serial device is

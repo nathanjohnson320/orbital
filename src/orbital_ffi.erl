@@ -14,6 +14,7 @@
     esp32_write_flash_data/3,
     esp32_write_flash_image/4,
     esp32_write_flash_parts/3,
+    esp32_write_flash_size_and_partition/6,
     confirm/1,
     zip_list/1,
     zip_get/2
@@ -162,6 +163,7 @@ esp32_write_flash_image(Port, Baud, Address, FilePath) ->
     end.
 
 %% Parts is a list of {Address :: integer(), FilePath :: binary()}.
+
 esp32_write_flash_parts(Port, Baud, Parts) ->
     PartArgs = lists:append([
         [<<"--part">>, <<(integer_to_binary(Address))/binary, ":", FilePath/binary>>]
@@ -172,6 +174,27 @@ esp32_write_flash_parts(Port, Baud, Parts) ->
         <<"--port">>, Port,
         <<"--baud">>, integer_to_binary(Baud)
         | PartArgs
+    ]) of
+        {ok, _Stdout} -> {ok, nil};
+        {error, Reason} -> {error, Reason}
+    end.
+
+esp32_write_flash_size_and_partition(
+    Port,
+    BootloaderOffset,
+    BootloaderPath,
+    PartitionOffset,
+    PartitionPath,
+    FlashSizeName
+) ->
+    case run_esp32_collect([
+        <<"write-flash-size-and-partition">>,
+        <<"--port">>, Port,
+        <<"--bootloader-offset">>, integer_to_binary(BootloaderOffset),
+        <<"--bootloader">>, BootloaderPath,
+        <<"--partition-offset">>, integer_to_binary(PartitionOffset),
+        <<"--partition">>, PartitionPath,
+        <<"--flash-size-name">>, FlashSizeName
     ]) of
         {ok, _Stdout} -> {ok, nil};
         {error, Reason} -> {error, Reason}
@@ -191,6 +214,7 @@ confirm(Prompt) ->
     end.
 
 %% List member names inside a zip (OTP zip, memory mode).
+
 zip_list(ZipPath) ->
     case zip:zip_open(unsafe_characters_to_list(ZipPath), [memory]) of
         {ok, Handle} ->
@@ -209,6 +233,7 @@ zip_list(ZipPath) ->
     end.
 
 %% Read one zip member into a binary.
+
 zip_get(ZipPath, Member) ->
     case zip:zip_open(unsafe_characters_to_list(ZipPath), [memory]) of
         {ok, Handle} ->

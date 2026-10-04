@@ -37,6 +37,14 @@ pub fn hex_address_formats_the_badge_slot_test() {
   |> should.equal("0x2b8000")
 }
 
+pub fn expected_table_layout_constants_test() {
+  partition.expected_table_offset()
+  |> should.equal(0x8000)
+
+  partition.expected_table_size()
+  |> should.equal(0xC00)
+}
+
 pub fn expand_partition_grows_final_main_avm_test() {
   let table =
     build_partition_table([
