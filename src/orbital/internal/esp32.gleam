@@ -10,6 +10,7 @@ import gleam/bit_array
 import gleam/dynamic/decode
 import gleam/int
 import gleam/json
+import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
@@ -77,6 +78,39 @@ pub fn select_port(port: String) -> Result(String, Error) {
   }
 }
 
+/// Resolve a port and return the matching probed device record.
+pub fn select_device(port: String) -> Result(Device, Error) {
+  use raw <- result.try(select_device_ffi(port) |> map_ffi_error)
+  case json.parse(raw, device_decoder()) {
+    Ok(device) -> Ok(device)
+    Error(_) ->
+      Error(DeviceError(
+        reason: "ESP32 helper select-device returned invalid JSON.",
+      ))
+  }
+}
+
+/// Flash a full firmware `.img` at `address` using esptool's write-flash.
+pub fn write_flash_image(
+  port port: String,
+  baud baud: Int,
+  address address: Int,
+  file_path file_path: String,
+) -> Result(Nil, Error) {
+  write_flash_image_ffi(port, baud, address, file_path)
+  |> map_ffi_error
+}
+
+/// Flash multiple `(address, file)` parts in one esptool write-flash call.
+pub fn write_flash_parts(
+  port port: String,
+  baud baud: Int,
+  parts parts: List(#(Int, String)),
+) -> Result(Nil, Error) {
+  write_flash_parts_ffi(port, baud, parts)
+  |> map_ffi_error
+}
+
 /// Erase the entire flash of the device at `port` (`"auto"` allowed).
 pub fn erase_flash(port: String) -> Result(Nil, Error) {
   erase_flash_ffi(port)
@@ -113,6 +147,29 @@ pub fn write_flash_data(
   file_path file_path: String,
 ) -> Result(Nil, Error) {
   write_flash_data_ffi(port, address, file_path)
+  |> map_ffi_error
+}
+
+/// Update the bootloader flash-size header and rewrite the partition table.
+///
+/// Uses esptool's image-header rewriter so flash mode/frequency stay `keep`
+/// while the size matches `flash_size_name` (e.g. `"16MB"`).
+pub fn write_flash_size_and_partition(
+  port port: String,
+  bootloader_offset bootloader_offset: Int,
+  bootloader_path bootloader_path: String,
+  partition_offset partition_offset: Int,
+  partition_path partition_path: String,
+  flash_size_name flash_size_name: String,
+) -> Result(Nil, Error) {
+  write_flash_size_and_partition_ffi(
+    port,
+    bootloader_offset,
+    bootloader_path,
+    partition_offset,
+    partition_path,
+    flash_size_name,
+  )
   |> map_ffi_error
 }
 
@@ -183,6 +240,93 @@ pub fn format_device(device: Device) -> String {
   <> atomvm
   <> ") - "
   <> device.port
+}
+
+/// Full `info` report for zero or more connected devices.
+pub fn format_info_report(devices: List(Device)) -> String {
+  case devices {
+    [] ->
+      "Found no ESP32 devices.\n"
+      <> "You may have to hold the BOOT button down while plugging in the device."
+    _ -> {
+      let count = list.length(devices)
+      let heading = case count {
+        1 -> "Found 1 connected ESP32:"
+        n -> "Found " <> int.to_string(n) <> " connected ESP32 boards:"
+      }
+      let summary = case count > 1 {
+        False -> ""
+        True ->
+          "\n"
+          <> {
+            list.map(devices, fn(device) {
+              "• "
+              <> pad_right(device.chip_family_name, 8)
+              <> " - Port: "
+              <> device.port
+            })
+            |> string.join(with: "\n")
+          }
+          <> "\n"
+      }
+      let details =
+        list.map(devices, format_info_device)
+        |> string.join(with: "\n")
+      heading <> summary <> "\n" <> details <> "\n"
+    }
+  }
+}
+
+fn format_info_device(device: Device) -> String {
+  let installed = case device.atomvm_installed {
+    True -> "yes"
+    False -> "no"
+  }
+  let features = case device.features {
+    [] -> "  (none)"
+    features ->
+      list.map(features, fn(feature) { "  · " <> feature })
+      |> string.join(with: "\n")
+  }
+  [
+    "━━━━━━━━━━━━━━━━━━━━━━",
+    device.chip_family_name <> " - Port: " <> device.port,
+    "USB_MODE: " <> device.usb_mode,
+    "MAC: " <> device.mac_address,
+    "AtomVM installed: " <> installed,
+    "",
+    "Build Information:",
+    ..list.append(format_build_info(device.build_info), [
+      "",
+      "Features:",
+      features,
+    ])
+  ]
+  |> string.join(with: "\n")
+}
+
+fn format_build_info(build_info: List(String)) -> List(String) {
+  case build_info {
+    [version, target, time, date, sdk] -> [
+      "  Version: " <> version,
+      "  Target:  " <> target,
+      "  Built:   " <> time <> " " <> date,
+      "  SDK:     " <> sdk,
+    ]
+    [] -> ["  Build info not available"]
+    infos ->
+      list.index_map(infos, fn(info, index) {
+        "  Info " <> int.to_string(index + 1) <> ": " <> info
+      })
+  }
+}
+
+fn pad_right(text: String, width: Int) -> String {
+  let padding = width - string.length(text)
+  case padding > 0 {
+    True -> text <> string.repeat(" ", padding)
+    False -> text
+  }
 }
 
 /// Prefer an explicit port, otherwise `"auto"`.
@@ -276,6 +420,9 @@ fn list_devices_ffi() -> Result(String, String)
 @external(erlang, "orbital_ffi", "esp32_select_port")
 fn select_port_ffi(port: String) -> Result(String, String)
 
+@external(erlang, "orbital_ffi", "esp32_select_device")
+fn select_device_ffi(port: String) -> Result(String, String)
+
 @external(erlang, "orbital_ffi", "esp32_erase_flash")
 fn erase_flash_ffi(port: String) -> Result(Nil, String)
 
@@ -293,4 +440,29 @@ fn write_flash_data_ffi(
   port: String,
   address: Int,
   file_path: String,
+) -> Result(Nil, String)
+
+@external(erlang, "orbital_ffi", "esp32_write_flash_image")
+fn write_flash_image_ffi(
+  port: String,
+  baud: Int,
+  address: Int,
+  file_path: String,
+) -> Result(Nil, String)
+
+@external(erlang, "orbital_ffi", "esp32_write_flash_parts")
+fn write_flash_parts_ffi(
+  port: String,
+  baud: Int,
+  parts: List(#(Int, String)),
+) -> Result(Nil, String)
+
+@external(erlang, "orbital_ffi", "esp32_write_flash_size_and_partition")
+fn write_flash_size_and_partition_ffi(
+  port: String,
+  bootloader_offset: Int,
+  bootloader_path: String,
+  partition_offset: Int,
+  partition_path: String,
+  flash_size_name: String,
 ) -> Result(Nil, String)

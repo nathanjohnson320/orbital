@@ -2,6 +2,7 @@ import glam/doc.{type Document}
 import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/result
 import gleam/string
 import gleam_community/ansi
 import hoist.{type ValidatedFlagSpecs}
@@ -22,6 +23,21 @@ pub type Command {
     reset: Bool,
     help: Bool,
   )
+  Install(
+    image: Option(String),
+    version: Option(String),
+    repo: Option(String),
+    update: Bool,
+    download_only: Bool,
+    list_images: Bool,
+    chip: Option(String),
+    baud: Option(Int),
+    port: Option(String),
+    help: Bool,
+  )
+  Expand(port: Option(String), help: Bool)
+  EraseFlash(port: Option(String), help: Bool)
+  Info(help: Bool)
 }
 
 /// `offset` is the flash address of `main.avm`. `None` means read that address
@@ -45,6 +61,10 @@ pub type ParsingState {
   ParsingBuild
   ParsingList
   ParsingMonitor
+  ParsingInstall
+  ParsingExpand
+  ParsingEraseFlash
+  ParsingInfo
 }
 
 pub type CustomError {
@@ -62,6 +82,7 @@ pub type Error {
     value: String,
     expected: String,
   )
+  ConflictingFlags(message: String)
 }
 
 pub fn parse(args: List(String)) -> Result(Command, Error) {
@@ -182,6 +203,86 @@ pub fn parse(args: List(String)) -> Result(Command, Error) {
         }
       }
 
+    Ok(hoist.Args(arguments: ["install"], flags:)) ->
+      case toggled(flags, "help") {
+        True ->
+          Ok(Install(
+            image: None,
+            version: None,
+            repo: None,
+            update: False,
+            download_only: False,
+            list_images: False,
+            chip: None,
+            baud: None,
+            port: None,
+            help: True,
+          ))
+        False -> {
+          use baud <- optional_int_flag(flags, ParsingInstall, "baud")
+          let image = option.from_result(find_flag_value(flags, "image"))
+          let version = option.from_result(find_flag_value(flags, "version"))
+          let repo = option.from_result(find_flag_value(flags, "repo"))
+          let chip = option.from_result(find_flag_value(flags, "chip"))
+          let update = toggled(flags, "update")
+          let download_only = toggled(flags, "download-only")
+          let list_images = toggled(flags, "list-images")
+          use Nil <- result.try(validate_install_flags(
+            image:,
+            version:,
+            update:,
+            download_only:,
+            list_images:,
+            chip:,
+          ))
+          case baud {
+            Some(baud) if baud < 1 ->
+              Error(InvalidFlagValue(
+                state: ParsingInstall,
+                flag: "baud",
+                value: int.to_string(baud),
+                expected: "an integer greater than zero",
+              ))
+            _ ->
+              Ok(Install(
+                image:,
+                version:,
+                repo:,
+                update:,
+                download_only:,
+                list_images:,
+                chip:,
+                baud:,
+                port: option.from_result(find_flag_value(flags, "port")),
+                help: False,
+              ))
+          }
+        }
+      }
+
+    Ok(hoist.Args(arguments: ["expand"], flags:)) ->
+      case toggled(flags, "help") {
+        True -> Ok(Expand(port: None, help: True))
+        False ->
+          Ok(Expand(
+            port: option.from_result(find_flag_value(flags, "port")),
+            help: False,
+          ))
+      }
+
+    Ok(hoist.Args(arguments: ["erase-flash"], flags:)) ->
+      case toggled(flags, "help") {
+        True -> Ok(EraseFlash(port: None, help: True))
+        False ->
+          Ok(EraseFlash(
+            port: option.from_result(find_flag_value(flags, "port")),
+            help: False,
+          ))
+      }
+
+    Ok(hoist.Args(arguments: ["info"], flags:)) ->
+      Ok(Info(help: toggled(flags, "help")))
+
     // Any other command is invalid. Hoist should prevent against this, but
     // rather than panicking I just use the same error.
     Ok(hoist.Args(arguments: [command, ..], flags: _)) -> {
@@ -210,6 +311,11 @@ fn parse_args(
 
       "list", ParsingBase -> Ok(#(ParsingList, list_flags()))
       "monitor", ParsingBase -> Ok(#(ParsingMonitor, monitor_flags()))
+      "install", ParsingBase -> Ok(#(ParsingInstall, install_flags()))
+      "expand", ParsingBase -> Ok(#(ParsingExpand, expand_flags()))
+      "erase-flash", ParsingBase ->
+        Ok(#(ParsingEraseFlash, erase_flash_flags()))
+      "info", ParsingBase -> Ok(#(ParsingInfo, info_flags()))
       "help", ParsingBase -> Ok(#(ParsingHelp, help_flags()))
       _, ParsingBase -> Error(UnknownCommand(command:))
 
@@ -224,6 +330,18 @@ fn parse_args(
 
       // The "monitor" command accepts no subcommands
       _, ParsingMonitor -> Error(UnknownCommand(command:))
+
+      // The "install" command accepts no subcommands
+      _, ParsingInstall -> Error(UnknownCommand(command:))
+
+      // The "expand" command accepts no subcommands
+      _, ParsingExpand -> Error(UnknownCommand(command:))
+
+      // The "erase-flash" command accepts no subcommands
+      _, ParsingEraseFlash -> Error(UnknownCommand(command:))
+
+      // The "info" command accepts no subcommands
+      _, ParsingInfo -> Error(UnknownCommand(command:))
 
       // The "flash" command takes positional arguments, but no subcommands, so
       // there's no need to special case any of them as they don't change the
@@ -329,6 +447,111 @@ fn monitor_flags() -> ValidatedFlagSpecs {
         |> hoist.as_toggle,
     ])
   monitor_flags
+}
+
+fn install_flags() -> ValidatedFlagSpecs {
+  let assert Ok(install_flags) =
+    hoist.validate_flag_specs([
+      hoist.new_flag("image"),
+      hoist.new_flag("version"),
+      hoist.new_flag("repo"),
+      hoist.new_flag("update")
+        |> hoist.as_toggle,
+      hoist.new_flag("download-only")
+        |> hoist.as_toggle,
+      hoist.new_flag("list-images")
+        |> hoist.as_toggle,
+      hoist.new_flag("chip"),
+      hoist.new_flag("baud")
+        |> hoist.with_short_alias("b"),
+      hoist.new_flag("port")
+        |> hoist.with_short_alias("p"),
+      hoist.new_flag("help")
+        |> hoist.with_short_alias("h")
+        |> hoist.as_toggle,
+    ])
+  install_flags
+}
+
+fn expand_flags() -> ValidatedFlagSpecs {
+  let assert Ok(expand_flags) =
+    hoist.validate_flag_specs([
+      hoist.new_flag("port")
+        |> hoist.with_short_alias("p"),
+      hoist.new_flag("help")
+        |> hoist.with_short_alias("h")
+        |> hoist.as_toggle,
+    ])
+  expand_flags
+}
+
+fn erase_flash_flags() -> ValidatedFlagSpecs {
+  let assert Ok(erase_flash_flags) =
+    hoist.validate_flag_specs([
+      hoist.new_flag("port")
+        |> hoist.with_short_alias("p"),
+      hoist.new_flag("help")
+        |> hoist.with_short_alias("h")
+        |> hoist.as_toggle,
+    ])
+  erase_flash_flags
+}
+
+fn validate_install_flags(
+  image image: Option(String),
+  version version: Option(String),
+  update update: Bool,
+  download_only download_only: Bool,
+  list_images list_images: Bool,
+  chip chip: Option(String),
+) -> Result(Nil, Error) {
+  case list_images {
+    True ->
+      case
+        option.is_some(image)
+        || option.is_some(version)
+        || update
+        || download_only
+      {
+        True ->
+          Error(ConflictingFlags(
+            "--list-images cannot be combined with --image, --version, --update or --download-only",
+          ))
+        False -> Ok(Nil)
+      }
+    False ->
+      case download_only && update {
+        True ->
+          Error(ConflictingFlags(
+            "--download-only and --update cannot be used together",
+          ))
+        False ->
+          case option.is_some(image) && option.is_some(version) {
+            True ->
+              Error(ConflictingFlags(
+                "--image and --version cannot be used together",
+              ))
+            False ->
+              case chip, download_only, image {
+                Some(_), True, None -> Ok(Nil)
+                Some(_), _, _ ->
+                  Error(ConflictingFlags(
+                    "--chip only applies to --list-images, and to --download-only without --image",
+                  ))
+                None, _, _ -> Ok(Nil)
+              }
+          }
+      }
+  }
+}
+fn info_flags() -> ValidatedFlagSpecs {
+  let assert Ok(info_flags) =
+    hoist.validate_flag_specs([
+      hoist.new_flag("help")
+      |> hoist.with_short_alias("h")
+      |> hoist.as_toggle,
+    ])
+  info_flags
 }
 
 const default_monitor_baud = "115200"
@@ -457,15 +680,23 @@ pub fn usage_text() -> Document {
     doc.lines(2),
     doc.from_string(ansi.magenta("Commands:")),
     doc.line,
-    command_line("  build    ", "build your code into an 'avm' file"),
+    command_line("  build        ", "build your code into an 'avm' file"),
     doc.line,
-    command_line("  flash    ", "build and flash your code to a device"),
+    command_line("  flash        ", "build and flash your code to a device"),
     doc.line,
-    command_line("  list     ", "list the contents of an 'avm' file"),
+    command_line("  info         ", "list connected ESP32 boards"),
     doc.line,
-    command_line("  monitor  ", "show the console of an ESP32 board"),
+    command_line("  list         ", "list the contents of an 'avm' file"),
     doc.line,
-    command_line("  help     ", "show this help text"),
+    command_line("  monitor      ", "show the console of an ESP32 board"),
+    doc.line,
+    command_line("  install      ", "install or update AtomVM on an ESP32"),
+    doc.line,
+    command_line("  expand       ", "grow main.avm to the end of ESP32 flash"),
+    doc.line,
+    command_line("  erase-flash  ", "erase the flash of an ESP32 board"),
+    doc.line,
+    command_line("  help         ", "show this help text"),
     doc.lines(2),
     doc.from_string(ansi.magenta("Flags:")),
     doc.line,
@@ -639,6 +870,157 @@ pub fn monitor_help_text(description: Bool) -> Document {
   |> doc.group
 }
 
+pub fn install_help_text(description: Bool) -> Document {
+  [
+    case description {
+      False -> doc.empty
+      True ->
+        "Erase flash and install AtomVM, or update an existing installation."
+        |> flex_text
+        |> doc.append(doc.lines(2))
+    },
+    doc.from_string(
+      ansi.magenta("Usage: ")
+      <> ansi.green("gleam run -m orbital ")
+      <> "install <FLAGS>",
+    ),
+    doc.lines(2),
+    doc.from_string(ansi.magenta("Flags:")),
+    doc.line,
+    flag_line(
+      "  --image           <PATH|NAME>  ",
+      "local .img/.zip or a published image name",
+    ),
+    doc.line,
+    flag_line(
+      "  --version         <TAG>        ",
+      "AtomVM release tag to install (Elixir image)",
+    ),
+    doc.line,
+    flag_line(
+      "  --repo            <OWNER/REPO> ",
+      "extra GitHub repository of custom builds",
+    ),
+    doc.line,
+    flag_line(
+      "  --update                       ",
+      "update VM and boot.avm only; keep NVS and main.avm",
+    ),
+    doc.line,
+    flag_line(
+      "  --download-only                ",
+      "download into firmware_images/ without flashing",
+    ),
+    doc.line,
+    flag_line(
+      "  --list-images                  ",
+      "list installable images instead of installing",
+    ),
+    doc.line,
+    flag_line(
+      "  --chip            <CHIP|all>   ",
+      "with --list-images or --download-only",
+    ),
+    doc.line,
+    flag_line_with_default(
+      "  -b, --baud        <INT>        ",
+      "baud rate used when flashing",
+      "921600",
+    ),
+    doc.line,
+    flag_line(
+      "  -p, --port         <PATH>       ",
+      "serial port. Chosen automatically when only one board is connected",
+    ),
+    doc.line,
+    flag_line("  -h, --help                       ", "show this help text"),
+  ]
+  |> doc.concat
+  |> doc.group
+}
+
+pub fn expand_help_text(description: Bool) -> Document {
+  [
+    case description {
+      False -> doc.empty
+      True ->
+        {
+          "Expand the final main.avm partition to the end of the detected ESP32 flash, "
+          <> "and update the bootloader flash-size header when needed."
+        }
+        |> flex_text
+        |> doc.append(doc.lines(2))
+    },
+    doc.from_string(
+      ansi.magenta("Usage: ")
+      <> ansi.green("gleam run -m orbital ")
+      <> "expand <FLAGS>",
+    ),
+    doc.lines(2),
+    doc.from_string(ansi.magenta("Flags:")),
+    doc.line,
+    flag_line(
+      "  -p, --port      <PATH>  ",
+      "serial port. Chosen automatically when only one board is connected",
+    ),
+    doc.line,
+    flag_line("  -h, --help              ", "show this help text"),
+  ]
+  |> doc.concat
+  |> doc.group
+}
+
+pub fn erase_flash_help_text(description: Bool) -> Document {
+  [
+    case description {
+      False -> doc.empty
+      True ->
+        "Erase the entire flash of a connected ESP32 board."
+        |> flex_text
+        |> doc.append(doc.lines(2))
+    },
+    doc.from_string(
+      ansi.magenta("Usage: ")
+      <> ansi.green("gleam run -m orbital ")
+      <> "erase-flash <FLAGS>",
+    ),
+    doc.lines(2),
+    doc.from_string(ansi.magenta("Flags:")),
+    doc.line,
+    flag_line(
+      "  -p, --port      <PATH>  ",
+      "serial port. Chosen automatically when only one board is connected",
+    ),
+    doc.line,
+    flag_line("  -h, --help              ", "show this help text"),
+  ]
+  |> doc.concat
+  |> doc.group
+}
+
+pub fn info_help_text(description: Bool) -> Document {
+  [
+    case description {
+      False -> doc.empty
+      True ->
+        "List connected ESP32 boards and whether AtomVM is installed on them."
+        |> flex_text
+        |> doc.append(doc.lines(2))
+    },
+    doc.from_string(
+      ansi.magenta("Usage: ")
+      <> ansi.green("gleam run -m orbital ")
+      <> "info <FLAGS>",
+    ),
+    doc.lines(2),
+    doc.from_string(ansi.magenta("Flags:")),
+    doc.line,
+    flag_line("  -h, --help  ", "show this help text"),
+  ]
+  |> doc.concat
+  |> doc.group
+}
+
 pub fn help_text_for_state(state: ParsingState) -> Document {
   case state {
     ParsingBase -> usage_text()
@@ -648,6 +1030,10 @@ pub fn help_text_for_state(state: ParsingState) -> Document {
     ParsingBuild -> build_help_text(False)
     ParsingList -> list_help_text(False)
     ParsingMonitor -> monitor_help_text(False)
+    ParsingInstall -> install_help_text(False)
+    ParsingExpand -> expand_help_text(False)
+    ParsingEraseFlash -> erase_flash_help_text(False)
+    ParsingInfo -> info_help_text(False)
   }
 }
 
@@ -737,6 +1123,15 @@ pub fn error_to_document(error: Error) -> Document {
         flex_text("'" <> platform <> "' is not a supported platform."),
         doc.lines(2),
         help_text_for_state(ParsingFlash),
+      ])
+
+    ConflictingFlags(message:) ->
+      doc.concat([
+        error_heading("conflicting flags"),
+        doc.line,
+        flex_text(message),
+        doc.lines(2),
+        help_text_for_state(ParsingInstall),
       ])
 
     HoistError(state:, error: hoist.UnknownFlag(flag)) ->
