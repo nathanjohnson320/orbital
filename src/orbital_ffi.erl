@@ -5,6 +5,7 @@
     packbeam_list/1,
     run_executable/3,
     find_executable/1,
+    run_named_executable/2,
     monitor/4,
     esp32_list_devices/0,
     esp32_select_port/1,
@@ -17,7 +18,10 @@
     esp32_write_flash_size_and_partition/6,
     confirm/1,
     zip_list/1,
-    zip_get/2
+    zip_get/2,
+    uf2create/4,
+    os_family/0,
+    wildcard/1
 ]).
 
 packbeam_create(OutputPath, StartModule, Files) ->
@@ -83,6 +87,73 @@ find_executable(Name) ->
         false -> {error, nil};
         Path -> {ok, unsafe_characters_to_binary(Path)}
     end.
+
+%% Run an executable by PATH name or absolute path (used for picotool).
+-spec run_named_executable(Name :: binary(), Arguments :: list(binary())) ->
+    {ok, integer()} | {error, nil}.
+run_named_executable(Name, Arguments) ->
+    case find_executable(Name) of
+        {ok, Path} -> run_executable(Path, <<".">>, Arguments);
+        {error, nil} ->
+            %% Absolute / relative path not necessarily on PATH.
+            case filelib:is_regular(unsafe_characters_to_list(Name)) of
+                true -> run_executable(Name, <<".">>, Arguments);
+                false -> {error, nil}
+            end
+    end.
+
+%% Create a UF2 from an AVM via uf2tool (same dependency ExAtomVM uses).
+-spec uf2create(
+    OutputPath :: binary(),
+    Family :: binary(),
+    StartAddr :: integer(),
+    ImagePath :: binary()
+) -> {ok, nil} | {error, binary()}.
+uf2create(OutputPath, Family, StartAddr, ImagePath) ->
+    case family_atom(Family) of
+        error -> {error, <<"unsupported family_id">>};
+        Fam ->
+            try uf2tool:uf2create(
+                    unicode:characters_to_list(OutputPath),
+                    Fam,
+                    StartAddr,
+                    unicode:characters_to_list(ImagePath)
+                )
+            of
+                ok -> {ok, nil}
+            catch
+                error:Reason -> {error, format_reason(Reason)};
+                throw:Reason -> {error, format_reason(Reason)};
+                exit:Reason -> {error, format_reason(Reason)}
+            end
+    end.
+
+family_atom(<<"rp2040">>) -> rp2040;
+family_atom(<<"rp2350_riscv">>) -> rp2350_riscv;
+family_atom(<<"rp2350_arm_s">>) -> rp2350_arm_s;
+family_atom(<<"rp2350_arm_ns">>) -> rp2350_arm_ns;
+family_atom(<<"absolute">>) -> absolute;
+family_atom(<<"data">>) -> data;
+family_atom(<<"universal">>) -> universal;
+family_atom(_) -> error.
+
+format_reason(Reason) ->
+    iolist_to_binary(io_lib:format("~p", [Reason])).
+
+-spec os_family() -> binary().
+os_family() ->
+    case os:type() of
+        {_, linux} -> <<"linux">>;
+        {_, darwin} -> <<"darwin">>;
+        _ -> <<"other">>
+    end.
+
+-spec wildcard(Pattern :: binary()) -> list(binary()).
+wildcard(Pattern) ->
+    [
+        unsafe_characters_to_binary(Path)
+     || Path <- filelib:wildcard(unsafe_characters_to_list(Pattern))
+    ].
 
 %% Shows the ESP32 console. The Python interpreter is taken from esptool's
 %% shebang, because that environment has pyserial.

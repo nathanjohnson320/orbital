@@ -28,6 +28,8 @@ pub fn start() {
 }
 ```
 
+### ESP32
+
 Install AtomVM on the board once, then build/flash your app and watch the
 console:
 
@@ -63,6 +65,33 @@ connected.
 
 `erase-flash` wipes the entire flash of a connected ESP32. Pass `--port` when
 more than one board is connected.
+
+### Raspberry Pi Pico
+
+Install AtomVM once (prefers a combined release UF2; uses `picotool` when
+available, otherwise BOOTSEL volume copy):
+
+```sh
+gleam run -m orbital install pico --board pico_w
+gleam run -m orbital install pico --list-images
+```
+
+A brand-new board may still need one BOOTSEL press if nothing on it can answer
+`picotool -f` yet. Then flash your Gleam app:
+
+```sh
+gleam run -m orbital flash pico
+```
+
+Orbital packs the project, converts it to UF2 (`uf2tool`, default family
+`universal` for Pico and Pico 2), resets into BOOTSEL when a matching serial
+device is present, and copies the UF2 onto the mounted `RPI-RP2` / `RP2350`
+volume.
+
+```sh
+gleam run -m orbital uf2create
+gleam run -m orbital flash pico --pico-path /Volumes/RPI-RP2 --family-id data
+```
 
 And you're good to go! To get an overview of all the available commands and
 options you can run:

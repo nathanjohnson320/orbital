@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Pico `install pico` downloads AtomVM UF2s (prefers `-combined`), caches under
+  `firmware_images/`, and loads with `picotool` (`load -f`) falling back to
+  UF2 volume copy. Flags: `--board`, `--image`, `--version`, `--repo`,
+  `--list-images`, `--download-only`, `--pico-path`, `--pico-reset`,
+  `--picotool`.
+- Pico flash parity with ExAtomVM: `flash pico` builds a UF2 (via `uf2tool`),
+  optionally resets into BOOTSEL (`stty` / `picotool`), waits for the mount, and
+  copies the UF2. Flags: `--pico-path`, `--pico-reset`, `--picotool`,
+  `--app-start` (default `0x10180000`), `--family-id` (default `universal`).
+- Added `uf2create` to build a Pico UF2 without flashing
+  (`--output-file`, `--app-start`, `--family-id`).
 - Added `install` to download/install/update AtomVM on ESP32 boards
   (`--image`, `--version`, `--repo`, `--update`, `--download-only`,
   `--list-images`, `--chip`, `--port`, `--baud`), with firmware caching under
