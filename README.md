@@ -34,6 +34,7 @@ run:
 ```sh
 gleam run -m orbital flash esp32
 gleam run -m orbital monitor
+gleam run -m orbital erase-flash
 ```
 
 `flash` reads the device partition table and writes the application at the
@@ -44,6 +45,9 @@ than one board is connected.
 `monitor` reads the serial console for 10 seconds. `--timeout 0` reads until
 Ctrl+C, pressed twice. The port is chosen when only one USB serial device is
 connected.
+
+`erase-flash` wipes the entire flash of a connected ESP32. Pass `--port` when
+more than one board is connected.
 
 And you're good to go! To get an overview of all the available commands and
 options you can run:
