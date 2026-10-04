@@ -8,8 +8,7 @@
   `firmware_images/` and ExAtomVM-compatible update guardrails.
 - Added shared ESP32 device helpers (`orbital/internal/esp32`) backed by
   `priv/esp32.py` for listing devices, selecting a port, erasing flash, and
-  reading/writing flash regions. Follow-up PRs will wire `erase-flash`, `info`,
-  `expand`, and `install` commands.
+  reading/writing flash regions.
 - Extended partition-table parsing with `main.avm` expansion helpers and added
   ESP32 image-header flash-size helpers for upcoming expand support.
 - ESP32 flash reads the device partition table and writes the application at
