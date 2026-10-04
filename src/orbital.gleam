@@ -63,6 +63,10 @@ pub fn main() -> Nil {
     Ok(cli.Monitor(port:, baud:, timeout:, reset:, help: False)) ->
       monitor(port, baud, timeout, reset)
 
+    Ok(cli.EraseFlash(help: True, ..)) ->
+      print_document(cli.erase_flash_help_text(True))
+    Ok(cli.EraseFlash(port:, help: False)) -> erase_flash(port)
+
     Ok(cli.Info(help: True)) -> print_document(cli.info_help_text(True))
     Ok(cli.Info(help: False)) -> info()
 
@@ -163,6 +167,31 @@ fn monitor(
       exit(1)
     }
   }
+}
+
+fn erase_flash(port: Option(String)) -> Nil {
+  let port = esp32.port_or_auto(port)
+  case do_erase_flash(port) {
+    Ok(resolved_port) ->
+      io.println(ansi.magenta(
+        "⚛️  erased the flash on '" <> resolved_port <> "'!",
+      ))
+    Error(error) -> {
+      io.println(error_to_string(error))
+      exit(1)
+    }
+  }
+}
+
+fn do_erase_flash(port: String) -> Result(String, Error) {
+  use resolved_port <- result.try(
+    esp32.select_port(port) |> result.map_error(Esp32HelperError),
+  )
+  io.println(ansi.dim("Erasing flash on '" <> resolved_port <> "'..."))
+  use Nil <- result.try(
+    esp32.erase_flash(resolved_port) |> result.map_error(Esp32HelperError),
+  )
+  Ok(resolved_port)
 }
 
 fn info() -> Nil {
@@ -374,7 +403,8 @@ fn error_to_string(error: Error) -> String {
     | CannotReadPartitionTable
     | CannotFindMainPartition -> "cannot flash device"
     Esp32HelperError(esp32.ToolingMissing(_)) -> "missing ESP32 tooling"
-    Esp32HelperError(esp32.DeviceError(_)) -> "cannot inspect ESP32 devices"
+    // Shared by info, erase-flash, and later device commands.
+    Esp32HelperError(esp32.DeviceError(_)) -> "ESP32 device error"
     OutputFileIsDirectory(_) -> "invalid output file"
     CannotReadAvmFile(_) -> "cannot read the 'avm' file"
 

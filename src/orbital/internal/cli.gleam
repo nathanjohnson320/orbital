@@ -22,6 +22,7 @@ pub type Command {
     reset: Bool,
     help: Bool,
   )
+  EraseFlash(port: Option(String), help: Bool)
   Info(help: Bool)
 }
 
@@ -46,6 +47,7 @@ pub type ParsingState {
   ParsingBuild
   ParsingList
   ParsingMonitor
+  ParsingEraseFlash
   ParsingInfo
 }
 
@@ -184,6 +186,16 @@ pub fn parse(args: List(String)) -> Result(Command, Error) {
         }
       }
 
+    Ok(hoist.Args(arguments: ["erase-flash"], flags:)) ->
+      case toggled(flags, "help") {
+        True -> Ok(EraseFlash(port: None, help: True))
+        False ->
+          Ok(EraseFlash(
+            port: option.from_result(find_flag_value(flags, "port")),
+            help: False,
+          ))
+      }
+
     Ok(hoist.Args(arguments: ["info"], flags:)) ->
       Ok(Info(help: toggled(flags, "help")))
 
@@ -215,6 +227,8 @@ fn parse_args(
 
       "list", ParsingBase -> Ok(#(ParsingList, list_flags()))
       "monitor", ParsingBase -> Ok(#(ParsingMonitor, monitor_flags()))
+      "erase-flash", ParsingBase ->
+        Ok(#(ParsingEraseFlash, erase_flash_flags()))
       "info", ParsingBase -> Ok(#(ParsingInfo, info_flags()))
       "help", ParsingBase -> Ok(#(ParsingHelp, help_flags()))
       _, ParsingBase -> Error(UnknownCommand(command:))
@@ -230,6 +244,9 @@ fn parse_args(
 
       // The "monitor" command accepts no subcommands
       _, ParsingMonitor -> Error(UnknownCommand(command:))
+
+      // The "erase-flash" command accepts no subcommands
+      _, ParsingEraseFlash -> Error(UnknownCommand(command:))
 
       // The "info" command accepts no subcommands
       _, ParsingInfo -> Error(UnknownCommand(command:))
@@ -338,6 +355,18 @@ fn monitor_flags() -> ValidatedFlagSpecs {
         |> hoist.as_toggle,
     ])
   monitor_flags
+}
+
+fn erase_flash_flags() -> ValidatedFlagSpecs {
+  let assert Ok(erase_flash_flags) =
+    hoist.validate_flag_specs([
+      hoist.new_flag("port")
+        |> hoist.with_short_alias("p"),
+      hoist.new_flag("help")
+        |> hoist.with_short_alias("h")
+        |> hoist.as_toggle,
+    ])
+  erase_flash_flags
 }
 
 fn info_flags() -> ValidatedFlagSpecs {
@@ -476,17 +505,19 @@ pub fn usage_text() -> Document {
     doc.lines(2),
     doc.from_string(ansi.magenta("Commands:")),
     doc.line,
-    command_line("  build    ", "build your code into an 'avm' file"),
+    command_line("  build        ", "build your code into an 'avm' file"),
     doc.line,
-    command_line("  flash    ", "build and flash your code to a device"),
+    command_line("  flash        ", "build and flash your code to a device"),
     doc.line,
-    command_line("  info     ", "list connected ESP32 boards"),
+    command_line("  info         ", "list connected ESP32 boards"),
     doc.line,
-    command_line("  list     ", "list the contents of an 'avm' file"),
+    command_line("  list         ", "list the contents of an 'avm' file"),
     doc.line,
-    command_line("  monitor  ", "show the console of an ESP32 board"),
+    command_line("  monitor      ", "show the console of an ESP32 board"),
     doc.line,
-    command_line("  help     ", "show this help text"),
+    command_line("  erase-flash  ", "erase the flash of an ESP32 board"),
+    doc.line,
+    command_line("  help         ", "show this help text"),
     doc.lines(2),
     doc.from_string(ansi.magenta("Flags:")),
     doc.line,
@@ -660,6 +691,34 @@ pub fn monitor_help_text(description: Bool) -> Document {
   |> doc.group
 }
 
+pub fn erase_flash_help_text(description: Bool) -> Document {
+  [
+    case description {
+      False -> doc.empty
+      True ->
+        "Erase the entire flash of a connected ESP32 board."
+        |> flex_text
+        |> doc.append(doc.lines(2))
+    },
+    doc.from_string(
+      ansi.magenta("Usage: ")
+      <> ansi.green("gleam run -m orbital ")
+      <> "erase-flash <FLAGS>",
+    ),
+    doc.lines(2),
+    doc.from_string(ansi.magenta("Flags:")),
+    doc.line,
+    flag_line(
+      "  -p, --port      <PATH>  ",
+      "serial port. Chosen automatically when only one board is connected",
+    ),
+    doc.line,
+    flag_line("  -h, --help              ", "show this help text"),
+  ]
+  |> doc.concat
+  |> doc.group
+}
+
 pub fn info_help_text(description: Bool) -> Document {
   [
     case description {
@@ -692,6 +751,7 @@ pub fn help_text_for_state(state: ParsingState) -> Document {
     ParsingBuild -> build_help_text(False)
     ParsingList -> list_help_text(False)
     ParsingMonitor -> monitor_help_text(False)
+    ParsingEraseFlash -> erase_flash_help_text(False)
     ParsingInfo -> info_help_text(False)
   }
 }
