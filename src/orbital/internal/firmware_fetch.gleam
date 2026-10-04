@@ -41,11 +41,10 @@ pub type Section {
 
 /// Render `--list-images` text (AtomVM + factory + optional repo + local).
 pub fn list_images_text(
-  chip: Option(String),
   repo: Option(String),
-  connected_chips: List(String),
+  filter: Option(List(String)),
+  header: List(String),
 ) -> Result(String, Error) {
-  let #(filter, header) = list_filter(chip, connected_chips)
   let sources = case repo {
     Some(repo) -> [Atomvm, Factory, CustomRepo(repo)]
     None -> [Atomvm, Factory]
@@ -55,12 +54,37 @@ pub fn list_images_text(
     Error(error) -> #(
       [],
       list.append(header, [
-        "Warning: " <> firmware.error_message(error) <> ". Only local images are listed.",
+        "Warning: "
+          <> firmware.error_message(error)
+          <> ". Only local images are listed.",
       ]),
     )
   }
   let sections = list.append(sections, [local_section()])
   Ok(render_list(sections, filter, header))
+}
+
+/// Update parts for an image: FLASH.txt bundle parts when zip, else sliced img.
+pub fn update_parts(
+  image: Image,
+  flash_offset: Int,
+) -> Result(firmware.UpdateParts, Error) {
+  case image.kind, image.path {
+    Zip, Some(path) -> {
+      use bundle <- result.try(verify_zip(path, image.stamp))
+      firmware.bundle_update_parts(bundle)
+    }
+    _, _ -> {
+      use path <- result.try(firmware.image_path(image))
+      use img_bytes <- result.try(
+        simplifile.read_bits(path)
+        |> result.map_error(fn(_) {
+          firmware.FileError("Could not read firmware image at " <> path)
+        }),
+      )
+      firmware.slice_image(img_bytes, flash_offset)
+    }
+  }
 }
 
 /// Resolve a local path (`.img` or `.zip`) onto disk metadata.
@@ -167,24 +191,6 @@ pub fn ensure_name(
 }
 
 // --- Listing -----------------------------------------------------------------
-
-fn list_filter(
-  chip: Option(String),
-  connected: List(String),
-) -> #(Option(List(String)), List(String)) {
-  case chip {
-    Some("all") -> #(None, [])
-    Some(chip) -> #(Some([chip]), [])
-    None ->
-      case connected {
-        [] -> #(None, ["No chip filter; listing every image."])
-        chips -> #(
-          Some(chips),
-          list.map(chips, fn(c) { "Connected chip filter: " <> c }),
-        )
-      }
-  }
-}
 
 fn fetch_listing(sources: List(Source)) -> Result(List(Section), Error) {
   list.try_fold(over: sources, from: [], with: fn(acc, source) {
@@ -329,14 +335,19 @@ fn render_list(
   filter: Option(List(String)),
   header: List(String),
 ) -> String {
+  let published =
+    list.flat_map(sections, fn(section) {
+      case section.kind {
+        "nightly" ->
+          list.map(section.images, fn(image) { #(image.name, image.stamp) })
+        _ -> []
+      }
+    })
   let #(hidden, shown) =
     list.map_fold(over: sections, from: 0, with: fn(hidden, section) {
       let #(kept, dropped) =
         list.partition(section.images, fn(image) { listed(image, filter) })
-      #(
-        hidden + list.length(dropped),
-        Section(..section, images: kept),
-      )
+      #(hidden + list.length(dropped), Section(..section, images: kept))
     })
   let body =
     list.flat_map(shown, fn(section) {
@@ -348,13 +359,8 @@ fn render_list(
             |> list.map(fn(i) { string.length(label(section, i)) })
             |> list.fold(0, int.max)
           let rows =
-            list.map(images, fn(image) {
-              "  "
-              <> string.pad_end(label(section, image), to: width, with: " ")
-              <> "  "
-              <> string.pad_end(flavor(image), to: 11, with: " ")
-              <> "  "
-              <> format_size(image.size)
+            list.flat_map(images, fn(image) {
+              row(section, image, width, published)
             })
           list.flatten([[section.title], rows, [""]])
         }
@@ -383,10 +389,70 @@ fn render_list(
     "  gleam run -m orbital install --version <tag>        the Elixir image of a release",
     "Older releases: https://github.com/atomvm/AtomVM/releases",
   ]
-  string.join(
-    list.flatten([intro, body, hidden_line, footer]),
-    with: "\n",
-  )
+  string.join(list.flatten([intro, body, hidden_line, footer]), with: "\n")
+}
+
+fn row(
+  section: Section,
+  image: Image,
+  width: Int,
+  published: List(#(String, Option(String))),
+) -> List(String) {
+  let first =
+    "  "
+    <> string.pad_end(label(section, image), to: width, with: " ")
+    <> "  "
+    <> string.pad_end(flavor(image), to: 11, with: " ")
+    <> "  "
+    <> firmware.format_size(image.size)
+    <> note(section, image, published)
+  case section.kind {
+    "nightly" -> {
+      let features = case image.features {
+        [] -> ""
+        features -> ", features: " <> string.join(features, with: ", ")
+      }
+      [
+        first,
+        "    build "
+          <> option.unwrap(image.stamp, "unknown")
+          <> " ("
+          <> option.unwrap(image.published_at, "?")
+          <> ")"
+          <> features,
+      ]
+    }
+    _ -> [first]
+  }
+}
+
+fn note(
+  section: Section,
+  image: Image,
+  published: List(#(String, Option(String))),
+) -> String {
+  case section.kind, image.source, image.channel {
+    "local", Some(Build), _ -> "  built under _build/atomvm_images"
+    "local", _, Nightly ->
+      case image.stamp {
+        Some(_) ->
+          case
+            list.contains(published, #(image.name, image.stamp))
+            || published == []
+          {
+            True -> "  cached"
+            False -> "  cached, no longer published"
+          }
+        None -> "  cached"
+      }
+    "local", _, _ -> "  cached"
+    "custom", _, _ ->
+      case image.chip {
+        None -> "  install by name with --repo"
+        Some(_) -> ""
+      }
+    _, _, _ -> ""
+  }
 }
 
 fn listed(image: Image, filter: Option(List(String))) -> Bool {
@@ -420,26 +486,6 @@ fn flavor(image: Image) -> String {
     None -> "unknown"
   }
 }
-
-fn format_size(size: Option(Int)) -> String {
-  case size {
-    None -> ""
-    Some(size) if size < 1024 -> int.to_string(size) <> " B"
-    Some(size) if size < 1024 * 1024 ->
-      float_one(int.to_float(size) /. 1024.0) <> " KB"
-    Some(size) ->
-      float_one(int.to_float(size) /. { 1024.0 *. 1024.0 }) <> " MB"
-  }
-}
-
-fn float_one(value: Float) -> String {
-  let whole = float_truncate(value)
-  let frac = float_truncate({ value -. int.to_float(whole) } *. 10.0)
-  int.to_string(whole) <> "." <> int.to_string(frac)
-}
-
-@external(erlang, "erlang", "trunc")
-fn float_truncate(value: Float) -> Int
 
 // --- Releases / download -----------------------------------------------------
 
@@ -481,7 +527,9 @@ fn download_release(
 ) -> Result(Image, Error) {
   use release <- result.try(fetch_release(source, version))
   let images = release_images(release, source)
-  use image <- result.try(select_release_image(images, release.tag_name, chip))
+  use image <- result.try(
+    firmware.select_release_image(images, release.tag_name, chip),
+  )
   ensure_cached(image)
 }
 
@@ -576,6 +624,7 @@ fn release_images(release: Release, source: Source) -> List(Image) {
                 tag: Some(release.tag_name),
                 url: Some(asset.url),
                 size: asset.size,
+                published_at: release.published_at,
                 sha256: digest_from_asset(asset),
                 sha256_url: sidecar_url(sidecars, asset.name),
                 stamp: case image.stamp {
@@ -596,7 +645,7 @@ fn asset_image(name: String, tag: String, source: Source) -> Option(Image) {
       case firmware.parse_name(name) {
         Ok(Image(version: None, ..) as image) ->
           Some(Image(..image, version: Some(tag), channel: firmware.Custom))
-        Ok(image) -> Some(Image(..image, channel: firmware.Custom))
+        Ok(image) -> Some(image)
         Error(_) ->
           Some(
             Image(
@@ -611,33 +660,6 @@ fn asset_image(name: String, tag: String, source: Source) -> Option(Image) {
       case firmware.parse_name(name) {
         Ok(image) -> Some(image)
         Error(_) -> None
-      }
-  }
-}
-
-fn select_release_image(
-  images: List(Image),
-  tag: String,
-  chip: String,
-) -> Result(Image, Error) {
-  let wanted = "AtomVM-" <> chip <> "-elixir-" <> tag
-  case list.find(images, fn(i) { i.name == wanted }) {
-    Ok(image) -> Ok(image)
-    Error(Nil) ->
-      case
-        list.find(images, fn(i) {
-          i.base_chip == Some(chip) && i.elixir == Some(True)
-        })
-      {
-        Ok(image) -> Ok(image)
-        Error(Nil) ->
-          case list.find(images, fn(i) { i.base_chip == Some(chip) }) {
-            Ok(image) -> Ok(image)
-            Error(Nil) ->
-              Error(Network(
-                "No firmware image for chip '" <> chip <> "' in release " <> tag <> ".",
-              ))
-          }
       }
   }
 }
@@ -668,8 +690,23 @@ fn ensure_cached(image: Image) -> Result(Image, Error) {
           io.println("Warning: could not verify sha256 for this download.")
         _ -> Nil
       }
+      print_gitignore_hint()
       finish_cached(Image(..image, path: Some(path)), path)
     }
+  }
+}
+
+fn print_gitignore_hint() -> Nil {
+  let gitignore = case simplifile.read(".gitignore") {
+    Ok(text) -> Some(text)
+    Error(_) -> None
+  }
+  case firmware.gitignore_hint(gitignore) {
+    Some(hint) -> {
+      io.println("")
+      io.println(hint)
+    }
+    None -> Nil
   }
 }
 
@@ -677,7 +714,7 @@ fn finish_cached(image: Image, path: String) -> Result(Image, Error) {
   case image.kind {
     Img -> Ok(image)
     Zip -> {
-      use bundle <- result.try(read_bundle(path, image.stamp))
+      use bundle <- result.try(verify_zip(path, image.stamp))
       let img_path = string_replace_end(path, ".zip", ".img")
       case simplifile.is_file(img_path) {
         Ok(True) -> Nil
@@ -686,37 +723,49 @@ fn finish_cached(image: Image, path: String) -> Result(Image, Error) {
           Nil
         }
       }
-      Ok(
-        Image(
-          ..image,
-          img_path: Some(img_path),
-          flash_offset: bundle.flash_offset,
-          chip: case image.chip {
-            Some(chip) -> Some(chip)
-            None -> bundle.chip
-          },
-          base_chip: case image.base_chip {
-            Some(chip) -> Some(chip)
-            None -> option.map(bundle.chip, base_chip_token)
-          },
-        ),
-      )
+      Ok(with_bundle(image, path, bundle, img_path))
     }
   }
 }
 
+fn with_bundle(
+  image: Image,
+  path: String,
+  bundle: firmware.VerifiedBundle,
+  img_path: String,
+) -> Image {
+  Image(
+    ..image,
+    path: Some(path),
+    img_path: Some(img_path),
+    stamp: case image.stamp {
+      Some(stamp) -> Some(stamp)
+      None -> bundle.stamp
+    },
+    flash_offset: Some(bundle.flash.flash_offset),
+    chip: case image.chip {
+      Some(chip) -> Some(chip)
+      None -> Some(bundle.flash.chip)
+    },
+    base_chip: case image.base_chip {
+      Some(chip) -> Some(chip)
+      None -> Some(base_chip_token(bundle.flash.chip))
+    },
+  )
+}
+
 fn extract_local_bundle(path: String) -> Result(Image, Error) {
-  use bundle <- result.try(read_bundle(path, None))
+  use bundle <- result.try(verify_zip(path, None))
   let image =
     Image(
-      ..firmware.local_image(string_replace_end(path, ".zip", ".img")),
+      ..firmware.local_image(path),
       kind: Zip,
       file: Some(basename(path)),
       path: Some(path),
       stamp: bundle.stamp,
-      chip: bundle.chip,
-      base_chip: option.map(bundle.chip, base_chip_token),
-      flash_offset: bundle.flash_offset,
+      chip: Some(bundle.flash.chip),
+      base_chip: Some(base_chip_token(bundle.flash.chip)),
+      flash_offset: Some(bundle.flash.flash_offset),
       source: Some(LocalSource),
     )
   let directory = cache_dir()
@@ -726,10 +775,20 @@ fn extract_local_bundle(path: String) -> Result(Image, Error) {
       firmware.FileError("Could not create " <> directory)
     }),
   )
-  let img_path =
-    filepath.join(directory, basename(string_replace_end(path, ".zip", ".img")))
+  let cached_name = cached_file_name(Image(..image, kind: Zip))
+  let cached_zip = filepath.join(directory, cached_name)
+  let img_path = string_replace_end(cached_zip, ".zip", ".img")
+  use Nil <- result.try(case simplifile.is_file(cached_zip) {
+    Ok(True) -> Ok(Nil)
+    _ ->
+      simplifile.read_bits(path)
+      |> result.map_error(fn(_) {
+        firmware.FileError("Could not read " <> path)
+      })
+      |> result.try(fn(data) { write_atomically(cached_zip, data) })
+  })
   use Nil <- result.try(write_atomically(img_path, bundle.image))
-  Ok(Image(..image, img_path: Some(img_path)))
+  Ok(with_bundle(image, cached_zip, bundle, img_path))
 }
 
 fn base_chip_token(chip: String) -> String {
@@ -739,94 +798,18 @@ fn base_chip_token(chip: String) -> String {
   }
 }
 
-type Bundle {
-  Bundle(
-    image: BitArray,
-    stamp: Option(String),
-    chip: Option(String),
-    flash_offset: Option(Int),
-  )
-}
-
-fn read_bundle(
+fn verify_zip(
   path: String,
   expected_stamp: Option(String),
-) -> Result(Bundle, Error) {
+) -> Result(firmware.VerifiedBundle, Error) {
   use names <- result.try(zip_list_ffi(path) |> map_zip_error)
-  let img_names = list.filter(names, fn(n) { string.ends_with(n, ".img") })
-  use img_name <- result.try(case img_names {
-    [name] -> Ok(name)
-    [name, ..] -> Ok(name)
-    [] -> Error(firmware.BadImage(basename(path) <> ": expected a .img member"))
-  })
-  use image <- result.try(zip_get_ffi(path, img_name) |> map_zip_error)
-  let flash = case list.contains(names, "FLASH.txt") {
-    True ->
-      case zip_get_ffi(path, "FLASH.txt") {
-        Ok(bytes) ->
-          case bit_array.to_string(bytes) {
-            Ok(text) -> parse_flash_txt(text)
-            Error(_) -> #(None, None)
-          }
-        Error(_) -> #(None, None)
-      }
-    False -> #(None, None)
-  }
-  let stamp = case expected_stamp {
-    Some(stamp) -> Some(stamp)
-    None ->
-      case list.contains(names, "sdkconfig") {
-        True ->
-          case zip_get_ffi(path, "sdkconfig") {
-            Ok(bytes) ->
-              case bit_array.to_string(bytes) {
-                Ok(text) -> stamp_from_sdkconfig(text)
-                Error(_) -> None
-              }
-            Error(_) -> None
-          }
-        False -> None
-      }
-  }
-  Ok(Bundle(
-    image:,
-    stamp:,
-    chip: flash.0,
-    flash_offset: flash.1,
-  ))
-}
-
-fn parse_flash_txt(text: String) -> #(Option(String), Option(Int)) {
-  list.fold(string.split(text, on: "\n"), #(None, None), fn(acc, line) {
-    case string.starts_with(line, "Chip:") {
-      True -> #(
-        Some(string.lowercase(string.trim(string.drop_start(line, 5)))),
-        acc.1,
-      )
-      False ->
-        case string.starts_with(line, "Flash offset:") {
-          True -> {
-            let raw = string.trim(string.drop_start(line, 13))
-            case parse_int_0(raw) {
-              Ok(offset) -> #(acc.0, Some(offset))
-              Error(_) -> acc
-            }
-          }
-          False -> acc
-        }
-    }
-  })
-}
-
-fn stamp_from_sdkconfig(text: String) -> Option(String) {
-  case string.split_once(text, on: "CONFIG_APP_PROJECT_VER=\"") {
-    Ok(#(_, rest)) ->
-      case string.split_once(rest, on: "\"") {
-        Ok(#(stamp, _)) -> Some(stamp)
-        Error(_) -> None
-      }
-    Error(_) -> None
-  }
+  use members <- result.try(
+    list.try_map(names, fn(name) {
+      use data <- result.try(zip_get_ffi(path, name) |> map_zip_error)
+      Ok(#(name, data))
+    }),
+  )
+  firmware.verify_bundle_members(members, basename(path), expected_stamp)
 }
 
 fn download_verified(image: Image) -> Result(#(BitArray, String), Error) {
@@ -1198,13 +1181,6 @@ fn stem_name(name: String) -> String {
   case string.ends_with(file, ".img") || string.ends_with(file, ".zip") {
     True -> string.drop_end(file, 4)
     False -> file
-  }
-}
-
-fn parse_int_0(raw: String) -> Result(Int, Nil) {
-  case string.starts_with(raw, "0x") || string.starts_with(raw, "0X") {
-    True -> int.base_parse(string.drop_start(raw, 2), 16)
-    False -> int.parse(raw)
   }
 }
 

@@ -8,6 +8,9 @@
   `firmware_images/` and ExAtomVM-compatible update guardrails. Listing and
   download use Gleam (`gleam_httpc` / `gleam_json`); only zip member reads and
   ESP32 device I/O still go through thin Erlang / `priv/esp32.py` helpers.
+  Parity fixes vs ExAtomVM: exact-chip Elixir release selection, factory zip
+  bundle verification + FLASH.txt update parts, reject `--download-only` with a
+  local path, and richer `--list-images` rendering.
 - Added shared ESP32 device helpers (`orbital/internal/esp32`) backed by
   `priv/esp32.py` for listing devices, selecting a port, erasing flash, and
   reading/writing flash regions.

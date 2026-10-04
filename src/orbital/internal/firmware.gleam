@@ -6,6 +6,7 @@
 //// `orbital/internal/firmware_fetch`.
 
 import gleam/bit_array
+import gleam/crypto
 import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
@@ -68,6 +69,37 @@ pub type Image {
     sha256_url: Option(String),
     tag: Option(String),
     source: Option(Source),
+    published_at: Option(String),
+  )
+}
+
+/// One binary listed in a bundle's FLASH.txt Contents section.
+pub type FlashPart {
+  FlashPart(name: String, offset: Int)
+}
+
+/// Parsed FLASH.txt header + Contents parts.
+pub type FlashInfo {
+  FlashInfo(
+    image: Option(String),
+    chip: String,
+    build: Option(String),
+    idf: Option(String),
+    flash_offset: Int,
+    app_offset: Option(Int),
+    parts: List(FlashPart),
+  )
+}
+
+/// A verified factory zip bundle (image + optional named parts).
+pub type VerifiedBundle {
+  VerifiedBundle(
+    stem: String,
+    image: BitArray,
+    flash: FlashInfo,
+    stamp: Option(String),
+    parts: List(#(String, BitArray)),
+    partitions_csv: Option(BitArray),
   )
 }
 
@@ -112,6 +144,10 @@ pub type Error {
   Network(String)
   UnknownImage(String)
   ReleaseNotFound(String)
+  NoElixirImage(tag: String, chip: String, erlang_name: String)
+  NoImageForChip(tag: String, chip: String, chips: List(String))
+  BadBundle(file: String, detail: String)
+  StampMismatch(file: String, expected: String, actual: String)
 }
 
 /// Parse `AtomVM-<chip>[-elixir][-features...]-<version>[+stamp][.img|.zip]`.
@@ -156,6 +192,7 @@ pub fn parse_name(name_or_path: String) -> Result(Image, Error) {
                 sha256_url: None,
                 tag: None,
                 source: None,
+                published_at: None,
               ))
             }
           }
@@ -163,6 +200,36 @@ pub fn parse_name(name_or_path: String) -> Result(Image, Error) {
       }
     }
     _ -> Error(UnrecognizedName(file))
+  }
+}
+
+/// The Elixir image of a release for `chip_token`, matched on the exact chip.
+pub fn select_release_image(
+  images: List(Image),
+  tag: String,
+  chip_token: String,
+) -> Result(Image, Error) {
+  let candidates =
+    list.filter(images, fn(image) { image.chip == Some(chip_token) })
+  case list.find(candidates, fn(image) { image.elixir == Some(True) }) {
+    Ok(image) -> Ok(image)
+    Error(Nil) ->
+      case candidates {
+        [] -> {
+          let chips =
+            images
+            |> list.filter_map(fn(image) { option.to_result(image.chip, Nil) })
+            |> list.unique
+            |> list.sort(string.compare)
+          Error(NoImageForChip(tag:, chip: chip_token, chips:))
+        }
+        [erlang, ..] ->
+          Error(NoElixirImage(
+            tag:,
+            chip: chip_token,
+            erlang_name: erlang.name,
+          ))
+      }
   }
 }
 
@@ -443,6 +510,240 @@ pub fn error_message(error: Error) -> String {
     UnknownImage(name) ->
       "Unknown image '" <> name <> "'. List them with --list-images."
     ReleaseNotFound(tag) -> "Release not found: " <> tag
+    NoElixirImage(tag:, chip:, erlang_name:) ->
+      "release "
+      <> tag
+      <> " has no Elixir image for "
+      <> chip
+      <> ", only the Erlang-only "
+      <> erlang_name
+    NoImageForChip(tag:, chip:, chips: []) ->
+      "release "
+      <> tag
+      <> " has no image named for "
+      <> chip
+      <> "; custom builds are installed by name with --image"
+    NoImageForChip(tag:, chip:, chips:) ->
+      "release "
+      <> tag
+      <> " has no image for "
+      <> chip
+      <> "; it has images for: "
+      <> string.join(chips, with: ", ")
+    BadBundle(file:, detail:) ->
+      file <> " is not a valid firmware bundle: " <> detail
+    StampMismatch(file:, expected:, actual:) ->
+      file
+      <> " carries build "
+      <> actual
+      <> " while the release notes say "
+      <> expected
+      <> "; the factory may be publishing a new build, retry in a few minutes"
+  }
+}
+
+/// Hint printed after a download when `firmware_images/` is not gitignored.
+pub fn gitignore_hint(gitignore: Option(String)) -> Option(String) {
+  let lines = case gitignore {
+    None -> []
+    Some(text) -> string.split(text, on: "\n")
+  }
+  let ignored =
+    list.any(lines, fn(line) {
+      let trimmed = string.trim(line)
+      trimmed == "firmware_images"
+        || trimmed == "firmware_images/"
+        || trimmed == "/firmware_images"
+        || trimmed == "/firmware_images/"
+    })
+  case ignored {
+    True -> None
+    False ->
+      Some(
+        "Tip: add firmware_images/ to .gitignore, e.g.\n  echo '/firmware_images/' >> .gitignore",
+      )
+  }
+}
+
+/// Parse a bundle FLASH.txt (chip + flash offset required).
+pub fn parse_flash_txt(text: String) -> Result(FlashInfo, Error) {
+  let lines = string.split(text, on: "\n")
+  let chip = capture_line(lines, "Chip:")
+  let flash_offset_raw = capture_line(lines, "Flash offset:")
+  case chip, flash_offset_raw {
+    None, _ -> Error(BadBundle(file: "FLASH.txt", detail: "missing Chip"))
+    _, None ->
+      Error(BadBundle(file: "FLASH.txt", detail: "missing Flash offset"))
+    Some(chip), Some(raw) ->
+      case parse_hex(string.trim(raw)) {
+        Error(_) ->
+          Error(BadBundle(file: "FLASH.txt", detail: "bad Flash offset"))
+        Ok(flash_offset) ->
+          Ok(FlashInfo(
+            image: capture_line(lines, "AtomVM firmware image:"),
+            chip: string.lowercase(string.trim(chip)),
+            build: capture_line(lines, "AtomVM build:"),
+            idf: capture_line(lines, "ESP-IDF:"),
+            flash_offset:,
+            app_offset: case
+              capture_line(lines, "Application partition (main.avm):")
+            {
+              None -> None
+              Some(value) ->
+                case parse_hex(string.trim(value)) {
+                  Ok(offset) -> Some(offset)
+                  Error(_) -> None
+                }
+            },
+            parts: flash_contents(lines),
+          ))
+      }
+  }
+}
+
+/// `CONFIG_APP_PROJECT_VER` from sdkconfig.
+pub fn bundle_stamp(sdkconfig: String) -> Option(String) {
+  case string.split_once(sdkconfig, on: "CONFIG_APP_PROJECT_VER=\"") {
+    Ok(#(_, rest)) ->
+      case string.split_once(rest, on: "\"") {
+        Ok(#(stamp, _)) -> Some(stamp)
+        Error(_) -> None
+      }
+    Error(_) -> None
+  }
+}
+
+/// Verify extracted zip members as a factory firmware bundle.
+pub fn verify_bundle_members(
+  members: List(#(String, BitArray)),
+  file: String,
+  expected_stamp: Option(String),
+) -> Result(VerifiedBundle, Error) {
+  let names = list.map(members, fn(pair) { pair.0 })
+  use img_name <- result.try(bundle_image_name(names, file))
+  use Nil <- result.try(members_present(names, ["FLASH.txt"], file))
+  use flash_bytes <- result.try(member_bytes(members, "FLASH.txt", file))
+  use flash_text <- result.try(case bit_array.to_string(flash_bytes) {
+    Ok(text) -> Ok(text)
+    Error(_) -> Error(BadBundle(file:, detail: "unreadable FLASH.txt"))
+  })
+  use flash <- result.try(case parse_flash_txt(flash_text) {
+    Ok(info) -> Ok(info)
+    Error(BadBundle(_, detail)) -> Error(BadBundle(file:, detail:))
+    Error(other) -> Error(other)
+  })
+  let part_names = list.map(flash.parts, fn(part) { part.name })
+  let summed =
+    list.append(
+      [img_name, "sdkconfig", "partitions.csv", "FLASH.txt"],
+      part_names,
+    )
+  let wanted = list.append([img_name <> ".sha256"], summed)
+  use Nil <- result.try(members_present(names, wanted, file))
+  use image <- result.try(member_bytes(members, img_name, file))
+  use Nil <- result.try(
+    check_listed_sha256(members, img_name <> ".sha256", [img_name], file),
+  )
+  use Nil <- result.try(case list.contains(names, "SHA256SUMS") {
+    True -> check_listed_sha256(members, "SHA256SUMS", summed, file)
+    False -> Ok(Nil)
+  })
+  use Nil <- result.try(check_parts_in_image(image, flash, members, file))
+  use Nil <- result.try(check_bundle_chip(img_name, flash.chip, file))
+  let stamp = case member_bytes(members, "sdkconfig", file) {
+    Ok(bytes) ->
+      case bit_array.to_string(bytes) {
+        Ok(text) -> bundle_stamp(text)
+        Error(_) -> None
+      }
+    Error(_) -> None
+  }
+  use Nil <- result.try(check_stamp(stamp, expected_stamp, file))
+  let parts =
+    list.filter_map(part_names, fn(name) {
+      case list.key_find(members, name) {
+        Ok(data) -> Ok(#(name, data))
+        Error(_) -> Error(Nil)
+      }
+    })
+  let partitions_csv = case list.key_find(members, "partitions.csv") {
+    Ok(data) -> Some(data)
+    Error(_) -> None
+  }
+  Ok(VerifiedBundle(
+    stem: string_replace_end(img_name, ".img", ""),
+    image:,
+    flash:,
+    stamp:,
+    parts:,
+    partitions_csv:,
+  ))
+}
+
+/// Update payloads from a verified zip bundle (FLASH.txt parts or sliced img).
+pub fn bundle_update_parts(
+  bundle: VerifiedBundle,
+) -> Result(UpdateParts, Error) {
+  case bundle.parts {
+    [] -> slice_image(bundle.image, bundle.flash.flash_offset)
+    parts -> {
+      let offsets =
+        list.map(bundle.flash.parts, fn(part) { #(part.name, part.offset) })
+      let lib_name =
+        list.find_map(parts, fn(pair) {
+          case string.ends_with(pair.0, ".avm") {
+            True -> Ok(pair.0)
+            False -> Error(Nil)
+          }
+        })
+      let wanted = [
+        "bootloader.bin",
+        "partition-table.bin",
+        "atomvm-esp32.bin",
+        option.unwrap(result_to_option(lib_name), "boot library"),
+      ]
+      let present = list.map(parts, fn(pair) { pair.0 })
+      let missing =
+        list.filter(wanted, fn(name) { !list.contains(present, name) })
+      case missing, lib_name {
+        [], Ok(lib) -> {
+          use bootloader <- result.try(part_data(parts, "bootloader.bin"))
+          use table <- result.try(part_data(parts, "partition-table.bin"))
+          use app <- result.try(part_data(parts, "atomvm-esp32.bin"))
+          use lib_bytes <- result.try(part_data(parts, lib))
+          use app_offset <- result.try(part_offset(offsets, "atomvm-esp32.bin"))
+          use lib_offset <- result.try(part_offset(offsets, lib))
+          Ok(UpdateParts(
+            bootloader:,
+            table:,
+            app_offset:,
+            app_name: "atomvm-esp32.bin",
+            app:,
+            lib_offset:,
+            lib_name: lib,
+            lib: lib_bytes,
+          ))
+        }
+        missing, _ ->
+          Error(BadBundle(
+            file: bundle.stem <> ".zip",
+            detail: "missing "
+              <> string.join(missing, with: ", "),
+          ))
+      }
+    }
+  }
+}
+
+/// Human-readable size matching ExAtomVM (`ceil` KB below 1 MB).
+pub fn format_size(bytes: Option(Int)) -> String {
+  case bytes {
+    None -> ""
+    Some(size) if size >= 1_048_576 -> {
+      let mb = int.to_float(size) /. 1_048_576.0
+      float_one(mb) <> " MB"
+    }
+    Some(size) -> int.to_string({ size + 1023 } / 1024) <> " KB"
   }
 }
 
@@ -480,6 +781,7 @@ fn file_image(file: String) -> Image {
         sha256_url: None,
         tag: None,
         source: Some(LocalSource),
+        published_at: None,
       )
     }
   }
@@ -545,15 +847,55 @@ fn channel(version: Option(String)) -> Channel {
   }
 }
 
+/// `^esp32([a-z]\\d+)?(_[a-z0-9]+)*$` — matches ExAtomVM's chip token regex.
 fn valid_chip(chip: String) -> Bool {
   case string.starts_with(chip, "esp32") {
     False -> False
-    True ->
-      string.to_graphemes(chip)
-      |> list.all(fn(g) {
-        string.contains("abcdefghijklmnopqrstuvwxyz0123456789_", g)
-      })
+    True -> {
+      let rest = string.drop_start(chip, 5)
+      case rest {
+        "" -> True
+        _ ->
+          case string.split(rest, on: "_") {
+            [first, ..variants] ->
+              case first {
+                "" ->
+                  list.all(variants, valid_chip_variant)
+                  && variants != []
+                _ ->
+                  valid_chip_family(first)
+                  && list.all(variants, valid_chip_variant)
+              }
+            [] -> False
+          }
+      }
+    }
   }
+}
+
+fn valid_chip_family(token: String) -> Bool {
+  case string.to_graphemes(token) {
+    [first, ..digits] ->
+      is_lower_letter(first)
+      && digits != []
+      && list.all(digits, is_digit)
+    [] -> False
+  }
+}
+
+fn valid_chip_variant(token: String) -> Bool {
+  token != ""
+  && list.all(string.to_graphemes(token), fn(g) {
+    is_lower_letter(g) || is_digit(g)
+  })
+}
+
+fn is_lower_letter(g: String) -> Bool {
+  string.contains("abcdefghijklmnopqrstuvwxyz", g)
+}
+
+fn is_digit(g: String) -> Bool {
+  string.contains("0123456789", g)
 }
 
 fn valid_version(version: String) -> Bool {
@@ -847,3 +1189,272 @@ fn hex_digits(value: Int) -> String {
     _ -> hex_digits(rest) <> digit
   }
 }
+
+fn capture_line(lines: List(String), prefix: String) -> Option(String) {
+  case
+    list.find_map(lines, fn(line) {
+      case string.starts_with(line, prefix) {
+        True -> Ok(string.trim(string.drop_start(line, string.length(prefix))))
+        False -> Error(Nil)
+      }
+    })
+  {
+    Ok(value) if value != "" -> Some(value)
+    _ -> None
+  }
+}
+
+fn flash_contents(lines: List(String)) -> List(FlashPart) {
+  lines
+  |> list.drop_while(fn(line) { line != "Contents" })
+  |> list.drop(2)
+  |> list.take_while(fn(line) { !is_underline(line) })
+  |> list.filter_map(fn(line) {
+    case
+      string.trim(line)
+      |> string.split(on: " ")
+      |> list.filter(fn(part) { part != "" })
+    {
+      [offset, name] ->
+        case parse_hex(offset) {
+          Ok(value) -> Ok(FlashPart(name:, offset: value))
+          Error(_) -> Error(Nil)
+        }
+      _ -> Error(Nil)
+    }
+  })
+}
+
+fn is_underline(line: String) -> Bool {
+  line != "" && list.all(string.to_graphemes(line), fn(g) { g == "-" })
+}
+
+fn parse_hex(raw: String) -> Result(Int, Nil) {
+  case string.starts_with(string.lowercase(raw), "0x") {
+    True -> int.base_parse(string.drop_start(raw, 2), 16)
+    False -> Error(Nil)
+  }
+}
+
+fn bundle_image_name(
+  names: List(String),
+  file: String,
+) -> Result(String, Error) {
+  case list.filter(names, fn(n) { string.ends_with(n, ".img") }) {
+    [name] -> Ok(name)
+    _ -> Error(BadBundle(file:, detail: "expected exactly one .img member"))
+  }
+}
+
+fn members_present(
+  names: List(String),
+  wanted: List(String),
+  file: String,
+) -> Result(Nil, Error) {
+  let missing = list.filter(wanted, fn(name) { !list.contains(names, name) })
+  case missing {
+    [] -> Ok(Nil)
+    _ ->
+      Error(BadBundle(
+        file:,
+        detail: "missing " <> string.join(missing, with: ", "),
+      ))
+  }
+}
+
+fn member_bytes(
+  members: List(#(String, BitArray)),
+  name: String,
+  file: String,
+) -> Result(BitArray, Error) {
+  case list.key_find(members, name) {
+    Ok(data) -> Ok(data)
+    Error(_) -> Error(BadBundle(file:, detail: "missing " <> name))
+  }
+}
+
+fn check_listed_sha256(
+  members: List(#(String, BitArray)),
+  sums_name: String,
+  names: List(String),
+  file: String,
+) -> Result(Nil, Error) {
+  case list.key_find(members, sums_name) {
+    Error(_) -> Ok(Nil)
+    Ok(bytes) ->
+      case bit_array.to_string(bytes) {
+        Error(_) -> Error(BadBundle(file:, detail: "unreadable " <> sums_name))
+        Ok(text) -> {
+          let lines = parse_sha256_lines(text)
+          list.try_fold(over: lines, from: Nil, with: fn(_, pair) {
+            let #(hex, name) = pair
+            case list.contains(names, name) {
+              False -> Ok(Nil)
+              True ->
+                case list.key_find(members, name) {
+                  Error(_) -> Ok(Nil)
+                  Ok(data) -> {
+                    let actual =
+                      string.lowercase(
+                        bit_array.base16_encode(crypto.hash(crypto.Sha256, data)),
+                      )
+                    case actual == string.lowercase(hex) {
+                      True -> Ok(Nil)
+                      False ->
+                        Error(BadBundle(
+                          file:,
+                          detail: "sha256 mismatch for " <> name,
+                        ))
+                    }
+                  }
+                }
+            }
+          })
+        }
+      }
+  }
+}
+
+fn parse_sha256_lines(text: String) -> List(#(String, String)) {
+  list.filter_map(string.split(text, on: "\n"), fn(line) {
+    let trimmed = string.trim(line)
+    case string.split(trimmed, on: " ") {
+      [hex, name, ..] ->
+        case string.length(hex) == 64 {
+          True -> {
+            let name =
+              name
+              |> string.trim_start
+              |> strip_star_prefix
+            Ok(#(string.lowercase(hex), name))
+          }
+          False -> Error(Nil)
+        }
+      _ -> Error(Nil)
+    }
+  })
+}
+
+fn strip_star_prefix(name: String) -> String {
+  case string.starts_with(name, "*") {
+    True -> string.drop_start(name, 1)
+    False -> name
+  }
+}
+
+fn check_parts_in_image(
+  image: BitArray,
+  flash: FlashInfo,
+  members: List(#(String, BitArray)),
+  file: String,
+) -> Result(Nil, Error) {
+  list.try_fold(over: flash.parts, from: Nil, with: fn(_, part) {
+    case list.key_find(members, part.name) {
+      Error(_) ->
+        Error(BadBundle(file:, detail: "missing part " <> part.name))
+      Ok(data) -> {
+        let start = part.offset - flash.flash_offset
+        let size = bit_array.byte_size(data)
+        case
+          start >= 0
+          && start + size <= bit_array.byte_size(image)
+        {
+          False ->
+            Error(BadBundle(
+              file:,
+              detail: "part mismatch for "
+                <> part.name
+                <> " at "
+                <> format_hex(part.offset),
+            ))
+          True ->
+            case bit_array.slice(image, start, size) {
+              Ok(slice) if slice == data -> Ok(Nil)
+              _ ->
+                Error(BadBundle(
+                  file:,
+                  detail: "part mismatch for "
+                    <> part.name
+                    <> " at "
+                    <> format_hex(part.offset),
+                ))
+            }
+        }
+      }
+    }
+  })
+}
+
+fn check_bundle_chip(
+  img_name: String,
+  flash_chip: String,
+  file: String,
+) -> Result(Nil, Error) {
+  case parse_name(img_name) {
+    Ok(Image(base_chip: Some(chip), ..)) if chip != flash_chip ->
+      Error(BadBundle(
+        file:,
+        detail: "chip "
+          <> flash_chip
+          <> " does not match image name chip "
+          <> chip,
+      ))
+    _ -> Ok(Nil)
+  }
+}
+
+fn check_stamp(
+  stamp: Option(String),
+  expected: Option(String),
+  file: String,
+) -> Result(Nil, Error) {
+  case stamp, expected {
+    Some(actual), Some(wanted) if actual != wanted ->
+      Error(StampMismatch(file:, expected: wanted, actual:))
+    _, _ -> Ok(Nil)
+  }
+}
+
+fn part_data(
+  parts: List(#(String, BitArray)),
+  name: String,
+) -> Result(BitArray, Error) {
+  case list.key_find(parts, name) {
+    Ok(data) -> Ok(data)
+    Error(_) -> Error(BadBundle(file: name, detail: "missing part"))
+  }
+}
+
+fn part_offset(
+  offsets: List(#(String, Int)),
+  name: String,
+) -> Result(Int, Error) {
+  case list.key_find(offsets, name) {
+    Ok(offset) -> Ok(offset)
+    Error(_) -> Error(BadBundle(file: name, detail: "missing offset"))
+  }
+}
+
+fn result_to_option(result: Result(a, b)) -> Option(a) {
+  case result {
+    Ok(value) -> Some(value)
+    Error(_) -> None
+  }
+}
+
+fn string_replace_end(value: String, suffix: String, with with_: String) -> String {
+  case string.ends_with(value, suffix) {
+    True -> string.drop_end(value, string.length(suffix)) <> with_
+    False -> value
+  }
+}
+
+fn float_one(value: Float) -> String {
+  let tenths = float_round(value *. 10.0)
+  let whole = tenths / 10
+  let frac = tenths % 10
+  int.to_string(whole) <> "." <> int.to_string(frac)
+}
+
+@external(erlang, "erlang", "round")
+fn float_round(value: Float) -> Int

@@ -54,19 +54,51 @@ pub fn run(options: Options) -> Result(Nil, Error) {
 }
 
 fn list_images(options: Options) -> Result(Nil, Error) {
-  let connected = case esp32.list_devices() {
-    Ok(devices) ->
-      devices
-      |> list.map(fn(d) { firmware.chip_token(d.chip_family_name) })
-      |> list.unique
-    Error(_) -> []
-  }
+  let #(filter, header) = list_filter(options.chip)
   use text <- result.try(
-    firmware_fetch.list_images_text(options.chip, options.repo, connected)
+    firmware_fetch.list_images_text(options.repo, filter, header)
     |> map_firmware_error,
   )
   io.println(text)
   Ok(Nil)
+}
+
+fn list_filter(
+  chip: Option(String),
+) -> #(Option(List(String)), List(String)) {
+  case chip {
+    Some("all") -> #(None, [])
+    Some(chip) -> #(Some([chip]), [])
+    None ->
+      case esp32.list_devices() {
+        Ok([]) -> #(None, ["No ESP32 device found, listing every image."])
+        Ok(devices) -> {
+          let chips =
+            devices
+            |> list.map(fn(d) { firmware.chip_token(d.chip_family_name) })
+            |> list.unique
+          #(Some(chips), list.map(devices, connected_line))
+        }
+        Error(_) -> #(
+          None,
+          ["Could not probe ESP32 devices, listing every image."],
+        )
+      }
+  }
+}
+
+fn connected_line(device: esp32.Device) -> String {
+  let installed = case device.atomvm_installed, device.build_info {
+    True, [version, ..] -> version
+    True, [] -> "installed"
+    False, _ -> "no AtomVM"
+  }
+  "Connected: "
+  <> device.chip_family_name
+  <> " on "
+  <> device.port
+  <> ", installed: "
+  <> installed
 }
 
 fn download_only(options: Options) -> Result(Nil, Error) {
@@ -152,15 +184,8 @@ fn do_update(
   case device.atomvm_installed {
     False -> Error(FirmwareError(firmware.error_message(firmware.NotInstalled)))
     True -> {
-      use path <- result.try(firmware.image_path(image) |> map_firmware_error)
-      use img_bytes <- result.try(
-        simplifile.read_bits(path)
-        |> result.map_error(fn(_) {
-          FirmwareError("Could not read firmware image at " <> path)
-        }),
-      )
       use parts <- result.try(
-        firmware.slice_image(img_bytes, offset) |> map_firmware_error,
+        firmware_fetch.update_parts(image, offset) |> map_firmware_error,
       )
       use #(board_table, table_meta) <- result.try(
         esp32.read_flash_bytes(
@@ -250,7 +275,9 @@ fn resolve_for_download(options: Options) -> Result(firmware.Image, Error) {
     Some(image), None ->
       case firmware.classify_image_arg(image, option.is_some(options.repo)) {
         Ok(firmware.PathArg(path)) ->
-          firmware_fetch.ensure_path(path) |> map_firmware_error
+          Error(Validation(
+            "--download-only needs a published image, " <> path <> " is a file",
+          ))
         Ok(firmware.NameArg(parsed)) ->
           firmware_fetch.ensure_name(parsed.name, options.repo)
           |> map_firmware_error

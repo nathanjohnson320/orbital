@@ -1,5 +1,7 @@
 import gleam/bit_array
+import gleam/crypto
 import gleam/option.{None, Some}
+import gleam/string
 import gleeunit
 import orbital/internal/firmware
 import orbital/internal/firmware_fetch
@@ -64,6 +66,7 @@ pub fn flash_offset_for_known_chips_test() {
       sha256_url: None,
       tag: None,
       source: None,
+      published_at: None,
     )
   let assert Ok(0x0) = firmware.flash_offset_for(image, "esp32s3")
   let assert Ok(0x1000) = firmware.flash_offset_for(image, "esp32")
@@ -112,6 +115,161 @@ pub fn ensure_path_local_img_test() {
   assert image.source == Some(firmware.LocalSource)
   assert image.size == Some(9)
   let _ = simplifile.delete(path)
+}
+
+pub fn select_release_image_exact_chip_and_elixir_test() {
+  let assert Ok(esp32) = firmware.parse_name("AtomVM-esp32-elixir-v0.7.0-alpha.1.img")
+  let assert Ok(esp32_erl) = firmware.parse_name("AtomVM-esp32-v0.7.0-alpha.1.img")
+  let assert Ok(p4) = firmware.parse_name("AtomVM-esp32p4-elixir-v0.7.0-alpha.1.img")
+  let assert Ok(p4_pre) =
+    firmware.parse_name("AtomVM-esp32p4_pre-elixir-v0.7.0-alpha.1.img")
+  let images = [esp32, esp32_erl, p4, p4_pre]
+  let assert Ok(selected) =
+    firmware.select_release_image(images, "v0.7.0-alpha.1", "esp32")
+  assert selected.name == "AtomVM-esp32-elixir-v0.7.0-alpha.1"
+  let assert Ok(selected_p4) =
+    firmware.select_release_image(images, "v0.7.0-alpha.1", "esp32p4")
+  assert selected_p4.name == "AtomVM-esp32p4-elixir-v0.7.0-alpha.1"
+}
+
+pub fn select_release_image_requires_elixir_test() {
+  let assert Ok(erlang) = firmware.parse_name("AtomVM-esp32-v0.6.4.img")
+  let assert Error(firmware.NoElixirImage(
+    tag: "v0.6.4",
+    chip: "esp32",
+    erlang_name: "AtomVM-esp32-v0.6.4",
+  )) = firmware.select_release_image([erlang], "v0.6.4", "esp32")
+}
+
+pub fn select_release_image_lists_chips_test() {
+  let assert Ok(esp32) = firmware.parse_name("AtomVM-esp32-elixir-v0.7.0.img")
+  let assert Ok(s3) = firmware.parse_name("AtomVM-esp32s3-elixir-v0.7.0.img")
+  let assert Error(firmware.NoImageForChip(
+    tag: "v0.7.0",
+    chip: "esp32c5",
+    chips: ["esp32", "esp32s3"],
+  )) = firmware.select_release_image([esp32, s3], "v0.7.0", "esp32c5")
+}
+
+pub fn parse_name_rejects_loose_chip_token_test() {
+  let assert Error(firmware.UnrecognizedName(_)) =
+    firmware.parse_name("AtomVM-esp32foo-elixir-v0.6.6.img")
+}
+
+pub fn parse_flash_txt_reads_parts_test() {
+  let text =
+    "AtomVM firmware image: AtomVM-esp32s3-nightly-0.7.img\n"
+    <> "Chip: esp32s3\n"
+    <> "AtomVM build: nightly-0.7+20260915.02e1603\n"
+    <> "ESP-IDF: 5.5.4\n"
+    <> "Flash offset: 0x0\n"
+    <> "Application partition (main.avm): 0x250000\n"
+    <> "\nContents\n--------\n\n"
+    <> "The binaries are the parts of the image, byte for byte, at these offsets:\n"
+    <> "  0x0       bootloader.bin\n"
+    <> "  0x40      partition-table.bin\n"
+    <> "  0x80      atomvm-esp32.bin\n"
+    <> "  0x100     esp32boot.avm\n"
+    <> "\nDebugging\n---------\n"
+  let assert Ok(flash) = firmware.parse_flash_txt(text)
+  assert flash.chip == "esp32s3"
+  assert flash.flash_offset == 0x0
+  assert flash.app_offset == Some(0x250000)
+  assert flash.parts
+    == [
+      firmware.FlashPart("bootloader.bin", 0x0),
+      firmware.FlashPart("partition-table.bin", 0x40),
+      firmware.FlashPart("atomvm-esp32.bin", 0x80),
+      firmware.FlashPart("esp32boot.avm", 0x100),
+    ]
+}
+
+pub fn format_size_matches_exatomvm_test() {
+  assert firmware.format_size(Some(2_197_764)) == "2.1 MB"
+  assert firmware.format_size(Some(315_504)) == "309 KB"
+  assert firmware.format_size(None) == ""
+}
+
+pub fn gitignore_hint_test() {
+  let assert Some(hint) = firmware.gitignore_hint(None)
+  assert string_contains(hint, "firmware_images")
+  assert firmware.gitignore_hint(Some("/_build/\n/firmware_images/\n")) == None
+  assert firmware.gitignore_hint(Some("firmware_images\n")) == None
+}
+
+pub fn verify_bundle_members_accepts_parts_test() {
+  let stem = "AtomVM-esp32s3-atomgl-nightly-0.7"
+  let stamp = "nightly-0.7+20260915.02e1603"
+  let bootloader = <<0xE9, 1, 2, 3, 0xAB, 0xAB, 0xAB, 0xAB>>
+  let table = <<0xAA, 0x50, 1, 2, 3, 4>>
+  let app = <<0xE9, 0xCD, 0xCD, 0xCD>>
+  let lib = <<"#!/usr/bin/env AtomVM\n", 0x42, 0x42>>
+  let image =
+    pad_to(bootloader, 0x0)
+    |> append_at(0x40, table)
+    |> append_at(0x80, app)
+    |> append_at(0x100, lib)
+  let flash_txt =
+    "Chip: esp32s3\nFlash offset: 0x0\n\nContents\n--------\n\n"
+    <> "  0x0       bootloader.bin\n"
+    <> "  0x40      partition-table.bin\n"
+    <> "  0x80      atomvm-esp32.bin\n"
+    <> "  0x100     esp32boot.avm\n"
+  let sdkconfig = "CONFIG_APP_PROJECT_VER=\"" <> stamp <> "\"\n"
+  let partitions = "nvs,data,nvs,0x9000,0x6000\n"
+  let img_name = stem <> ".img"
+  let sha_line = sha256_hex(image) <> "  " <> img_name <> "\n"
+  let members = [
+    #(img_name, image),
+    #(img_name <> ".sha256", <<sha_line:utf8>>),
+    #("sdkconfig", <<sdkconfig:utf8>>),
+    #("partitions.csv", <<partitions:utf8>>),
+    #("FLASH.txt", <<flash_txt:utf8>>),
+    #("bootloader.bin", bootloader),
+    #("partition-table.bin", table),
+    #("atomvm-esp32.bin", app),
+    #("esp32boot.avm", lib),
+  ]
+  let assert Ok(bundle) =
+    firmware.verify_bundle_members(members, "b.zip", Some(stamp))
+  assert bundle.stamp == Some(stamp)
+  assert bundle.flash.chip == "esp32s3"
+  let assert Ok(parts) = firmware.bundle_update_parts(bundle)
+  assert parts.app_name == "atomvm-esp32.bin"
+  assert parts.lib_name == "esp32boot.avm"
+  assert parts.app_offset == 0x80
+  assert parts.lib_offset == 0x100
+}
+
+fn string_contains(haystack: String, needle: String) -> Bool {
+  case string.split_once(haystack, on: needle) {
+    Ok(_) -> True
+    Error(_) -> False
+  }
+}
+
+fn sha256_hex(data: BitArray) -> String {
+  bit_array.base16_encode(crypto.hash(crypto.Sha256, data))
+  |> string.lowercase
+}
+
+fn pad_to(data: BitArray, _offset: Int) -> BitArray {
+  data
+}
+
+fn append_at(image: BitArray, offset: Int, data: BitArray) -> BitArray {
+  let gap = offset - bit_array.byte_size(image)
+  case gap > 0 {
+    True -> <<image:bits, erased(gap):bits, data:bits>>
+    False -> <<image:bits, data:bits>>
+  }
+}
+
+fn erased(n: Int) -> BitArray {
+  case n <= 0 {
+    True -> <<>>
+    False -> <<0xFF, erased(n - 1):bits>>
+  }
 }
 
 pub fn compare_bootloader_refuses_newer_board_test() {
