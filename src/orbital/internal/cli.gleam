@@ -23,6 +23,7 @@ pub type Command {
     help: Bool,
   )
   Expand(port: Option(String), help: Bool)
+  EraseFlash(port: Option(String), help: Bool)
 }
 
 /// `offset` is the flash address of `main.avm`. `None` means read that address
@@ -47,6 +48,7 @@ pub type ParsingState {
   ParsingList
   ParsingMonitor
   ParsingExpand
+  ParsingEraseFlash
 }
 
 pub type CustomError {
@@ -194,6 +196,16 @@ pub fn parse(args: List(String)) -> Result(Command, Error) {
           ))
       }
 
+    Ok(hoist.Args(arguments: ["erase-flash"], flags:)) ->
+      case toggled(flags, "help") {
+        True -> Ok(EraseFlash(port: None, help: True))
+        False ->
+          Ok(EraseFlash(
+            port: option.from_result(find_flag_value(flags, "port")),
+            help: False,
+          ))
+      }
+
     // Any other command is invalid. Hoist should prevent against this, but
     // rather than panicking I just use the same error.
     Ok(hoist.Args(arguments: [command, ..], flags: _)) -> {
@@ -223,6 +235,8 @@ fn parse_args(
       "list", ParsingBase -> Ok(#(ParsingList, list_flags()))
       "monitor", ParsingBase -> Ok(#(ParsingMonitor, monitor_flags()))
       "expand", ParsingBase -> Ok(#(ParsingExpand, expand_flags()))
+      "erase-flash", ParsingBase ->
+        Ok(#(ParsingEraseFlash, erase_flash_flags()))
       "help", ParsingBase -> Ok(#(ParsingHelp, help_flags()))
       _, ParsingBase -> Error(UnknownCommand(command:))
 
@@ -240,6 +254,9 @@ fn parse_args(
 
       // The "expand" command accepts no subcommands
       _, ParsingExpand -> Error(UnknownCommand(command:))
+
+      // The "erase-flash" command accepts no subcommands
+      _, ParsingEraseFlash -> Error(UnknownCommand(command:))
 
       // The "flash" command takes positional arguments, but no subcommands, so
       // there's no need to special case any of them as they don't change the
@@ -357,6 +374,18 @@ fn expand_flags() -> ValidatedFlagSpecs {
         |> hoist.as_toggle,
     ])
   expand_flags
+}
+
+fn erase_flash_flags() -> ValidatedFlagSpecs {
+  let assert Ok(erase_flash_flags) =
+    hoist.validate_flag_specs([
+      hoist.new_flag("port")
+        |> hoist.with_short_alias("p"),
+      hoist.new_flag("help")
+        |> hoist.with_short_alias("h")
+        |> hoist.as_toggle,
+    ])
+  erase_flash_flags
 }
 
 const default_monitor_baud = "115200"
@@ -485,17 +514,19 @@ pub fn usage_text() -> Document {
     doc.lines(2),
     doc.from_string(ansi.magenta("Commands:")),
     doc.line,
-    command_line("  build    ", "build your code into an 'avm' file"),
+    command_line("  build        ", "build your code into an 'avm' file"),
     doc.line,
-    command_line("  flash    ", "build and flash your code to a device"),
+    command_line("  flash        ", "build and flash your code to a device"),
     doc.line,
-    command_line("  list     ", "list the contents of an 'avm' file"),
+    command_line("  list         ", "list the contents of an 'avm' file"),
     doc.line,
-    command_line("  monitor  ", "show the console of an ESP32 board"),
+    command_line("  monitor      ", "show the console of an ESP32 board"),
     doc.line,
-    command_line("  expand   ", "grow main.avm to the end of ESP32 flash"),
+    command_line("  expand       ", "grow main.avm to the end of ESP32 flash"),
     doc.line,
-    command_line("  help     ", "show this help text"),
+    command_line("  erase-flash  ", "erase the flash of an ESP32 board"),
+    doc.line,
+    command_line("  help         ", "show this help text"),
     doc.lines(2),
     doc.from_string(ansi.magenta("Flags:")),
     doc.line,
@@ -700,6 +731,34 @@ pub fn expand_help_text(description: Bool) -> Document {
   |> doc.group
 }
 
+pub fn erase_flash_help_text(description: Bool) -> Document {
+  [
+    case description {
+      False -> doc.empty
+      True ->
+        "Erase the entire flash of a connected ESP32 board."
+        |> flex_text
+        |> doc.append(doc.lines(2))
+    },
+    doc.from_string(
+      ansi.magenta("Usage: ")
+      <> ansi.green("gleam run -m orbital ")
+      <> "erase-flash <FLAGS>",
+    ),
+    doc.lines(2),
+    doc.from_string(ansi.magenta("Flags:")),
+    doc.line,
+    flag_line(
+      "  -p, --port      <PATH>  ",
+      "serial port. Chosen automatically when only one board is connected",
+    ),
+    doc.line,
+    flag_line("  -h, --help              ", "show this help text"),
+  ]
+  |> doc.concat
+  |> doc.group
+}
+
 pub fn help_text_for_state(state: ParsingState) -> Document {
   case state {
     ParsingBase -> usage_text()
@@ -710,6 +769,7 @@ pub fn help_text_for_state(state: ParsingState) -> Document {
     ParsingList -> list_help_text(False)
     ParsingMonitor -> monitor_help_text(False)
     ParsingExpand -> expand_help_text(False)
+    ParsingEraseFlash -> erase_flash_help_text(False)
   }
 }
 

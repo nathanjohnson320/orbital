@@ -67,6 +67,10 @@ pub fn main() -> Nil {
     Ok(cli.Expand(help: True, ..)) -> print_document(cli.expand_help_text(True))
     Ok(cli.Expand(port:, help: False)) -> expand(port)
 
+    Ok(cli.EraseFlash(help: True, ..)) ->
+      print_document(cli.erase_flash_help_text(True))
+    Ok(cli.EraseFlash(port:, help: False)) -> erase_flash(port)
+
     // Flashing is the more involved step, and changes based on the device.
     Ok(cli.Flash(help: True, ..)) -> print_document(cli.flash_help_text(True))
     Ok(cli.Flash(help: False, platform:)) -> flash(platform)
@@ -355,6 +359,31 @@ fn format_byte_size(bytes: Int) -> String {
   int.to_string(bytes) <> " bytes (" <> partition.hex_address(bytes) <> ")"
 }
 
+fn erase_flash(port: Option(String)) -> Nil {
+  let port = esp32.port_or_auto(port)
+  case do_erase_flash(port) {
+    Ok(resolved_port) ->
+      io.println(ansi.magenta(
+        "⚛️  erased the flash on '" <> resolved_port <> "'!",
+      ))
+    Error(error) -> {
+      io.println(error_to_string(error))
+      exit(1)
+    }
+  }
+}
+
+fn do_erase_flash(port: String) -> Result(String, Error) {
+  use resolved_port <- result.try(
+    esp32.select_port(port) |> result.map_error(Esp32HelperError),
+  )
+  io.println(ansi.dim("Erasing flash on '" <> resolved_port <> "'..."))
+  use Nil <- result.try(
+    esp32.erase_flash(resolved_port) |> result.map_error(Esp32HelperError),
+  )
+  Ok(resolved_port)
+}
+
 fn build(output_file: Option(String)) -> Nil {
   case do_build(output_file) {
     Ok(output_path) -> {
@@ -559,8 +588,8 @@ fn error_to_string(error: Error) -> String {
     | CannotReadPartitionTable
     | CannotFindMainPartition -> "cannot flash device"
     Esp32HelperError(esp32.ToolingMissing(_)) -> "missing ESP32 tooling"
-    Esp32HelperError(esp32.DeviceError(_))
-    | ExpandPartitionError(_)
+    Esp32HelperError(esp32.DeviceError(_)) -> "ESP32 device error"
+    ExpandPartitionError(_)
     | ExpandImageHeaderError(_)
     | InvalidBootloaderOffset
     | ExpandStagingFailed
