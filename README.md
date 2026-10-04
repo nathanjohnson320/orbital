@@ -68,9 +68,16 @@ more than one board is connected.
 
 ### Raspberry Pi Pico
 
-Install AtomVM on the Pico once (BOOTSEL + copy the release UF2; see the
-[getting started guide](https://doc.atomvm.org/latest/getting-started-guide.html)).
-Then flash your Gleam app:
+Install AtomVM once (prefers a combined release UF2; uses `picotool` when
+available, otherwise BOOTSEL volume copy):
+
+```sh
+gleam run -m orbital install pico --board pico_w
+gleam run -m orbital install pico --list-images
+```
+
+A brand-new board may still need one BOOTSEL press if nothing on it can answer
+`picotool -f` yet. Then flash your Gleam app:
 
 ```sh
 gleam run -m orbital flash pico
@@ -78,7 +85,8 @@ gleam run -m orbital flash pico
 
 Orbital packs the project, converts it to UF2 (`uf2tool`, default family
 `universal` for Pico and Pico 2), resets into BOOTSEL when a matching serial
-device is present, and copies the UF2 onto the mounted `RPI-RP2` volume.
+device is present, and copies the UF2 onto the mounted `RPI-RP2` / `RP2350`
+volume.
 
 ```sh
 gleam run -m orbital uf2create

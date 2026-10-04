@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Pico `install pico` downloads AtomVM UF2s (prefers `-combined`), caches under
+  `firmware_images/`, and loads with `picotool` (`load -f`) falling back to
+  UF2 volume copy. Flags: `--board`, `--image`, `--version`, `--repo`,
+  `--list-images`, `--download-only`, `--pico-path`, `--pico-reset`,
+  `--picotool`.
 - Pico flash parity with ExAtomVM: `flash pico` builds a UF2 (via `uf2tool`),
   optionally resets into BOOTSEL (`stty` / `picotool`), waits for the mount, and
   copies the UF2. Flags: `--pico-path`, `--pico-reset`, `--picotool`,

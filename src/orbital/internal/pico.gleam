@@ -38,6 +38,8 @@ pub type Error {
   ResetFailed(reason: String)
   CannotCopyUf2(reason: simplifile.FileError)
   SttyMissing
+  PicotoolMissing
+  PicotoolFailed(reason: String)
 }
 
 pub type FlashOptions {
@@ -123,15 +125,20 @@ pub fn resolve_family_id(override: Option(String)) -> Result(FamilyId, Error) {
 }
 
 pub fn default_mount() -> String {
+  default_mount_for_volume("RPI-RP2")
+}
+
+/// Mount path for a volume name (`RPI-RP2` or `RP2350`).
+pub fn default_mount_for_volume(volume: String) -> String {
   case os_family() {
     "linux" -> {
       let user = case envoy.get("USER") {
         Ok(user) -> user
         Error(_) -> ""
       }
-      "/run/media/" <> user <> "/RPI-RP2"
+      "/run/media/" <> user <> "/" <> volume
     }
-    "darwin" -> "/Volumes/RPI-RP2"
+    "darwin" -> "/Volumes/" <> volume
     _ -> ""
   }
 }
@@ -210,6 +217,71 @@ pub fn flash_uf2(
   |> result.map_error(CannotCopyUf2)
 }
 
+/// Install a firmware UF2: prefer `picotool load -f`, else mount-copy.
+pub fn install_firmware_uf2(
+  uf2_path uf2_path: String,
+  options options: FlashOptions,
+  volume volume: String,
+) -> Result(Nil, Error) {
+  let picotool = resolve_picotool(options.picotool)
+  case picotool {
+    Some(tool) ->
+      case picotool_load(tool, uf2_path) {
+        Ok(Nil) -> Ok(Nil)
+        Error(error) -> {
+          io.println(
+            "picotool load failed ("
+            <> error_message(error)
+            <> "); falling back to UF2 volume copy…",
+          )
+          install_via_mount(uf2_path, options, volume)
+        }
+      }
+    None -> install_via_mount(uf2_path, options, volume)
+  }
+}
+
+fn install_via_mount(
+  uf2_path: String,
+  options: FlashOptions,
+  volume: String,
+) -> Result(Nil, Error) {
+  let pico_path = case options.pico_path {
+    Some(path) -> path
+    None ->
+      case envoy.get("ATOMVM_PICO_MOUNT_PATH") {
+        Ok(path) -> path
+        Error(_) -> default_mount_for_volume(volume)
+      }
+  }
+  flash_uf2(
+    uf2_path:,
+    options: FlashOptions(..options, pico_path: Some(pico_path)),
+  )
+}
+
+fn picotool_load(tool: String, uf2_path: String) -> Result(Nil, Error) {
+  io.println("Loading " <> filepath.base_name(uf2_path) <> " with picotool…")
+  // `-f` resets a running compatible device into BOOTSEL, loads, then returns
+  // it to application mode. Virgin BOOTSEL devices accept load without `-f`.
+  case run_named_executable(tool, ["load", "-f", uf2_path]) {
+    Ok(0) -> Ok(Nil)
+    Ok(_) ->
+      case run_named_executable(tool, ["load", uf2_path]) {
+        Ok(0) -> {
+          let _ = run_named_executable(tool, ["reboot", "-f", "-a"])
+          Ok(Nil)
+        }
+        Ok(code) ->
+          Error(PicotoolFailed(
+            "picotool load failed with status " <> int.to_string(code),
+          ))
+        Error(_) -> Error(PicotoolFailed("could not run picotool load"))
+      }
+    Error(_) -> Error(PicotoolMissing)
+  }
+}
+
 pub fn error_message(error: Error) -> String {
   case error {
     UnsupportedFamilyId(value:) ->
@@ -236,6 +308,10 @@ pub fn error_message(error: Error) -> String {
     SttyMissing ->
       "Unable to locate 'stty' or 'picotool'. Close the serial monitor before "
       <> "flashing, or install picotool for automatic disconnect and BOOTSEL mode."
+    PicotoolMissing ->
+      "picotool was not found. Install it or pass --picotool, or put the Pico "
+      <> "in BOOTSEL mode so Orbital can copy the UF2 to the mounted volume."
+    PicotoolFailed(reason:) -> reason
   }
 }
 
