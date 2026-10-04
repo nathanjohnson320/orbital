@@ -71,6 +71,9 @@ pub fn main() -> Nil {
       print_document(cli.erase_flash_help_text(True))
     Ok(cli.EraseFlash(port:, help: False)) -> erase_flash(port)
 
+    Ok(cli.Info(help: True)) -> print_document(cli.info_help_text(True))
+    Ok(cli.Info(help: False)) -> info()
+
     // Flashing is the more involved step, and changes based on the device.
     Ok(cli.Flash(help: True, ..)) -> print_document(cli.flash_help_text(True))
     Ok(cli.Flash(help: False, platform:)) -> flash(platform)
@@ -384,6 +387,16 @@ fn do_erase_flash(port: String) -> Result(String, Error) {
   Ok(resolved_port)
 }
 
+fn info() -> Nil {
+  case esp32.list_devices() {
+    Ok(devices) -> io.println(esp32.format_info_report(devices))
+    Error(error) -> {
+      io.println(error_to_string(Esp32HelperError(error)))
+      exit(1)
+    }
+  }
+}
+
 fn build(output_file: Option(String)) -> Nil {
   case do_build(output_file) {
     Ok(output_path) -> {
@@ -588,6 +601,7 @@ fn error_to_string(error: Error) -> String {
     | CannotReadPartitionTable
     | CannotFindMainPartition -> "cannot flash device"
     Esp32HelperError(esp32.ToolingMissing(_)) -> "missing ESP32 tooling"
+    // Shared by info, erase-flash, expand, and later device commands.
     Esp32HelperError(esp32.DeviceError(_)) -> "ESP32 device error"
     ExpandPartitionError(_)
     | ExpandImageHeaderError(_)

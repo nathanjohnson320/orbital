@@ -10,6 +10,7 @@ import gleam/bit_array
 import gleam/dynamic/decode
 import gleam/int
 import gleam/json
+import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
@@ -206,6 +207,93 @@ pub fn format_device(device: Device) -> String {
   <> atomvm
   <> ") - "
   <> device.port
+}
+
+/// Full `info` report for zero or more connected devices.
+pub fn format_info_report(devices: List(Device)) -> String {
+  case devices {
+    [] ->
+      "Found no ESP32 devices.\n"
+      <> "You may have to hold the BOOT button down while plugging in the device."
+    _ -> {
+      let count = list.length(devices)
+      let heading = case count {
+        1 -> "Found 1 connected ESP32:"
+        n -> "Found " <> int.to_string(n) <> " connected ESP32 boards:"
+      }
+      let summary = case count > 1 {
+        False -> ""
+        True ->
+          "\n"
+          <> {
+            list.map(devices, fn(device) {
+              "• "
+              <> pad_right(device.chip_family_name, 8)
+              <> " - Port: "
+              <> device.port
+            })
+            |> string.join(with: "\n")
+          }
+          <> "\n"
+      }
+      let details =
+        list.map(devices, format_info_device)
+        |> string.join(with: "\n")
+      heading <> summary <> "\n" <> details <> "\n"
+    }
+  }
+}
+
+fn format_info_device(device: Device) -> String {
+  let installed = case device.atomvm_installed {
+    True -> "yes"
+    False -> "no"
+  }
+  let features = case device.features {
+    [] -> "  (none)"
+    features ->
+      list.map(features, fn(feature) { "  · " <> feature })
+      |> string.join(with: "\n")
+  }
+  [
+    "━━━━━━━━━━━━━━━━━━━━━━",
+    device.chip_family_name <> " - Port: " <> device.port,
+    "USB_MODE: " <> device.usb_mode,
+    "MAC: " <> device.mac_address,
+    "AtomVM installed: " <> installed,
+    "",
+    "Build Information:",
+    ..list.append(format_build_info(device.build_info), [
+      "",
+      "Features:",
+      features,
+    ])
+  ]
+  |> string.join(with: "\n")
+}
+
+fn format_build_info(build_info: List(String)) -> List(String) {
+  case build_info {
+    [version, target, time, date, sdk] -> [
+      "  Version: " <> version,
+      "  Target:  " <> target,
+      "  Built:   " <> time <> " " <> date,
+      "  SDK:     " <> sdk,
+    ]
+    [] -> ["  Build info not available"]
+    infos ->
+      list.index_map(infos, fn(info, index) {
+        "  Info " <> int.to_string(index + 1) <> ": " <> info
+      })
+  }
+}
+
+fn pad_right(text: String, width: Int) -> String {
+  let padding = width - string.length(text)
+  case padding > 0 {
+    True -> text <> string.repeat(" ", padding)
+    False -> text
+  }
 }
 
 /// Prefer an explicit port, otherwise `"auto"`.
