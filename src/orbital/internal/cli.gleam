@@ -16,6 +16,12 @@ pub type Command {
   Flash(platform: FlashPlatform, help: Bool)
   Build(output_file: Option(String), help: Bool)
   List(input_file: Option(String), help: Bool)
+  Uf2create(
+    output_file: Option(String),
+    app_start: Option(String),
+    family_id: Option(String),
+    help: Bool,
+  )
   Monitor(
     port: Option(String),
     baud: Option(Int),
@@ -49,7 +55,13 @@ pub type FlashPlatform {
     offset: Option(String),
     dry_run: Bool,
   )
-  Pico(port: String)
+  Pico(
+    pico_path: Option(String),
+    pico_reset: Option(String),
+    picotool: Option(String),
+    app_start: Option(String),
+    family_id: Option(String),
+  )
 }
 
 pub type ParsingState {
@@ -60,6 +72,7 @@ pub type ParsingState {
   ParsingHelp
   ParsingBuild
   ParsingList
+  ParsingUf2create
   ParsingMonitor
   ParsingInstall
   ParsingExpand
@@ -141,8 +154,21 @@ pub fn parse(args: List(String)) -> Result(Command, Error) {
           |> Error
 
         False, ["pico"] -> {
-          use port <- require_flag(flags, ParsingFlash, "port")
-          Ok(Flash(platform: Pico(port:), help: False))
+          use app_start <- app_start_flag(flags, ParsingFlashPico)
+          use family_id <- family_id_flag(flags, ParsingFlashPico)
+          Ok(Flash(
+            platform: Pico(
+              pico_path: option.from_result(find_flag_value(flags, "pico-path")),
+              pico_reset: option.from_result(find_flag_value(
+                flags,
+                "pico-reset",
+              )),
+              picotool: option.from_result(find_flag_value(flags, "picotool")),
+              app_start:,
+              family_id:,
+            ),
+            help: False,
+          ))
         }
 
         False, ["esp32"] -> {
@@ -161,6 +187,30 @@ pub fn parse(args: List(String)) -> Result(Command, Error) {
         }
 
         False, [platform] -> Error(InvalidFlashPlatform(platform))
+      }
+
+    Ok(hoist.Args(arguments: ["uf2create"], flags:)) ->
+      case toggled(flags, "help") {
+        True ->
+          Ok(Uf2create(
+            output_file: None,
+            app_start: None,
+            family_id: None,
+            help: True,
+          ))
+        False -> {
+          use app_start <- app_start_flag(flags, ParsingUf2create)
+          use family_id <- family_id_flag(flags, ParsingUf2create)
+          Ok(Uf2create(
+            output_file: option.from_result(find_flag_value(
+              flags,
+              "output-file",
+            )),
+            app_start:,
+            family_id:,
+            help: False,
+          ))
+        }
       }
 
     Ok(hoist.Args(arguments: ["monitor"], flags:)) ->
@@ -310,6 +360,7 @@ fn parse_args(
       "pico", ParsingFlash -> Ok(#(ParsingFlashPico, pico_flash_flags()))
 
       "list", ParsingBase -> Ok(#(ParsingList, list_flags()))
+      "uf2create", ParsingBase -> Ok(#(ParsingUf2create, uf2create_flags()))
       "monitor", ParsingBase -> Ok(#(ParsingMonitor, monitor_flags()))
       "install", ParsingBase -> Ok(#(ParsingInstall, install_flags()))
       "expand", ParsingBase -> Ok(#(ParsingExpand, expand_flags()))
@@ -327,6 +378,9 @@ fn parse_args(
 
       // The "list" command accepts no subcommands
       _, ParsingList -> Error(UnknownCommand(command:))
+
+      // The "uf2create" command accepts no subcommands
+      _, ParsingUf2create -> Error(UnknownCommand(command:))
 
       // The "monitor" command accepts no subcommands
       _, ParsingMonitor -> Error(UnknownCommand(command:))
@@ -425,10 +479,30 @@ fn esp_flash_flags() -> ValidatedFlagSpecs {
 fn pico_flash_flags() -> ValidatedFlagSpecs {
   let assert Ok(pico_flash_flags) =
     hoist.validate_flag_specs([
-      hoist.new_flag("port")
-      |> hoist.with_short_alias("p"),
+      hoist.new_flag("pico-path"),
+      hoist.new_flag("pico-reset"),
+      hoist.new_flag("picotool"),
+      hoist.new_flag("app-start"),
+      hoist.new_flag("family-id"),
+      hoist.new_flag("help")
+        |> hoist.with_short_alias("h")
+        |> hoist.as_toggle,
     ])
   pico_flash_flags
+}
+
+fn uf2create_flags() -> ValidatedFlagSpecs {
+  let assert Ok(uf2create_flags) =
+    hoist.validate_flag_specs([
+      hoist.new_flag("help")
+        |> hoist.with_short_alias("h")
+        |> hoist.as_toggle,
+      hoist.new_flag("output-file")
+        |> hoist.with_short_alias("o"),
+      hoist.new_flag("app-start"),
+      hoist.new_flag("family-id"),
+    ])
+  uf2create_flags
 }
 
 fn monitor_flags() -> ValidatedFlagSpecs {
@@ -544,6 +618,7 @@ fn validate_install_flags(
       }
   }
 }
+
 fn info_flags() -> ValidatedFlagSpecs {
   let assert Ok(info_flags) =
     hoist.validate_flag_specs([
@@ -568,18 +643,6 @@ fn find_flag_value(flags: List(hoist.Flag), name: String) {
         Error(Nil)
     }
   })
-}
-
-fn require_flag(
-  flags: List(hoist.Flag),
-  state: ParsingState,
-  name: String,
-  continue: fn(String) -> Result(a, Error),
-) -> Result(a, Error) {
-  case find_flag_value(flags, name) {
-    Ok(value) -> continue(value)
-    Error(_) -> Error(MissingRequiredFlag(state, name))
-  }
 }
 
 fn optional_int_flag(
@@ -622,6 +685,80 @@ fn offset_flag(
             expected: "a hex address like 0x2b8000",
           ))
       }
+  }
+}
+
+fn app_start_flag(
+  flags: List(hoist.Flag),
+  state: ParsingState,
+  continue: fn(Option(String)) -> Result(a, Error),
+) -> Result(a, Error) {
+  case find_flag_value(flags, "app-start") {
+    Error(_) -> continue(None)
+    Ok(value) ->
+      case is_app_start_address(value) {
+        True -> continue(Some(value))
+        False ->
+          Error(InvalidFlagValue(
+            state:,
+            flag: "app-start",
+            value:,
+            expected: "an address like 0x10180000",
+          ))
+      }
+  }
+}
+
+fn family_id_flag(
+  flags: List(hoist.Flag),
+  state: ParsingState,
+  continue: fn(Option(String)) -> Result(a, Error),
+) -> Result(a, Error) {
+  case find_flag_value(flags, "family-id") {
+    Error(_) -> continue(None)
+    Ok(value) ->
+      case is_family_id(value) {
+        True -> continue(Some(value))
+        False ->
+          Error(InvalidFlagValue(
+            state:,
+            flag: "family-id",
+            value:,
+            expected: "rp2040, data, absolute, rp2350_arm_s, rp2350_riscv, rp2350_arm_ns, or universal",
+          ))
+      }
+  }
+}
+
+fn is_app_start_address(value: String) -> Bool {
+  case value {
+    "0x" <> digits | "0X" <> digits -> digits != "" && hex_digits(digits)
+    "16#" <> digits -> digits != "" && hex_digits(digits)
+    _ ->
+      case int.parse(value) {
+        Ok(_) -> True
+        Error(_) -> False
+      }
+  }
+}
+
+fn is_family_id(value: String) -> Bool {
+  case string.lowercase(string.trim(value)) {
+    "rp2040"
+    | ":rp2040"
+    | "rp2350_riscv"
+    | ":rp2350_riscv"
+    | "rp2350_arm_s"
+    | ":rp2350_arm_s"
+    | "rp2350_arm_ns"
+    | ":rp2350_arm_ns"
+    | "absolute"
+    | ":absolute"
+    | "data"
+    | ":data"
+    | "universal"
+    | ":universal" -> True
+    _ -> False
   }
 }
 
@@ -683,6 +820,8 @@ pub fn usage_text() -> Document {
     command_line("  build        ", "build your code into an 'avm' file"),
     doc.line,
     command_line("  flash        ", "build and flash your code to a device"),
+    doc.line,
+    command_line("  uf2create    ", "build a Pico UF2 from your project"),
     doc.line,
     command_line("  info         ", "list connected ESP32 boards"),
     doc.line,
@@ -746,11 +885,33 @@ pub fn flash_help_text(description: Bool) -> Document {
       "flash address. Read from the device's main.avm partition when omitted",
     ),
     doc.lines(2),
-    command_line("  pico   ", ""),
+    command_line("  pico   ", "copy a UF2 onto a mounted Pico / Pico 2"),
     doc.line,
     flag_line(
-      "    -p, --port     <STRING>  ",
-      "the path where to find the pico device",
+      "    --pico-path    <PATH>   ",
+      "Pico mount point (default: OS RPI-RP2 volume)",
+    ),
+    doc.line,
+    flag_line(
+      "    --pico-reset   <PATH>   ",
+      "serial device glob used to enter BOOTSEL",
+    ),
+    doc.line,
+    flag_line(
+      "    --picotool     <PATH>   ",
+      "optional picotool for BOOTSEL reset fallback",
+    ),
+    doc.line,
+    flag_line_with_default(
+      "    --app-start    <HEX>    ",
+      "flash address of the application in the UF2",
+      "0x10180000",
+    ),
+    doc.line,
+    flag_line_with_default(
+      "    --family-id    <ID>     ",
+      "UF2 family (universal targets Pico and Pico 2)",
+      "universal",
     ),
     doc.lines(2),
     doc.from_string(ansi.magenta("Other flags:")),
@@ -759,6 +920,55 @@ pub fn flash_help_text(description: Bool) -> Document {
   ]
   |> doc.concat
   |> doc.group
+}
+
+pub fn uf2create_help_text(description: Bool) -> Document {
+  [
+    case description {
+      False -> doc.empty
+      True ->
+        [
+          flex_text(
+            "Build your project into an 'avm' file and convert it to a Pico UF2.",
+          ),
+          doc.line,
+          flex_text(
+            "`flash pico` runs this automatically; use this command when you "
+            <> "only need the UF2 file.",
+          ),
+        ]
+        |> doc.concat
+        |> doc.append(doc.lines(2))
+    },
+    doc.from_string(
+      ansi.magenta("Usage: ")
+      <> ansi.green("gleam run -m orbital ")
+      <> "uf2create <FLAGS>",
+    ),
+    doc.lines(2),
+    doc.from_string(ansi.magenta("Flags:")),
+    doc.line,
+    flag_line_with_default(
+      "  -o, --output-file  <PATH>  ",
+      "the path to write the UF2 file to",
+      "\"name_of_your_project.uf2\"",
+    ),
+    doc.line,
+    flag_line_with_default(
+      "  --app-start        <HEX>   ",
+      "flash address of the application in the UF2",
+      "0x10180000",
+    ),
+    doc.line,
+    flag_line_with_default(
+      "  --family-id        <ID>    ",
+      "UF2 family (universal targets Pico and Pico 2)",
+      "universal",
+    ),
+    doc.line,
+    flag_line("  -h, --help                  ", "show this help text"),
+  ]
+  |> doc.concat
 }
 
 pub fn build_help_text(description: Bool) -> Document {
@@ -1029,6 +1239,7 @@ pub fn help_text_for_state(state: ParsingState) -> Document {
     ParsingHelp -> usage_text()
     ParsingBuild -> build_help_text(False)
     ParsingList -> list_help_text(False)
+    ParsingUf2create -> uf2create_help_text(False)
     ParsingMonitor -> monitor_help_text(False)
     ParsingInstall -> install_help_text(False)
     ParsingExpand -> expand_help_text(False)
