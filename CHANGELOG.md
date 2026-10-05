@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added Gleam firmware_fetch for AtomVM GitHub list/download/cache.
 - Added ESP32 firmware bundle verify/update helpers (FLASH.txt, bootloader checks).
 - Added ESP32 firmware image naming/classify helpers for AtomVM install.
 - Added an `expand` command that grows the final `main.avm` partition to the end

@@ -1,6 +1,8 @@
 -module(orbital_ffi).
 
 -export([
+    zip_list/1,
+    zip_get/2,
     packbeam_create/3,
     packbeam_list/1,
     run_executable/3,
@@ -320,4 +322,39 @@ unsafe_characters_to_binary(Name) ->
     case unicode:characters_to_binary(Name) of
         Result when is_binary(Result) -> Result;
         Error -> throw({unsafe_characters_to_binary, Error})
+    end.
+
+%% List member names inside a zip (OTP zip, memory mode).
+
+zip_list(ZipPath) ->
+    case zip:zip_open(unsafe_characters_to_list(ZipPath), [memory]) of
+        {ok, Handle} ->
+            try zip:zip_list_dir(Handle) of
+                {ok, Entries} ->
+                    Names = [unsafe_characters_to_binary(Name)
+                             || {zip_file, Name, _Info, _Comment, _Offset, _CompSize} <- Entries],
+                    {ok, Names};
+                {error, Reason} ->
+                    {error, iolist_to_binary(io_lib:format("~p", [Reason]))}
+            after
+                zip:zip_close(Handle)
+            end;
+        {error, Reason} ->
+            {error, iolist_to_binary(io_lib:format("~p", [Reason]))}
+    end.
+
+%% Read one zip member into a binary.
+
+zip_get(ZipPath, Member) ->
+    case zip:zip_open(unsafe_characters_to_list(ZipPath), [memory]) of
+        {ok, Handle} ->
+            try zip:zip_get(unsafe_characters_to_list(Member), Handle) of
+                {ok, {_Name, Bin}} when is_binary(Bin) -> {ok, Bin};
+                {error, Reason} ->
+                    {error, iolist_to_binary(io_lib:format("~p", [Reason]))}
+            after
+                zip:zip_close(Handle)
+            end;
+        {error, Reason} ->
+            {error, iolist_to_binary(io_lib:format("~p", [Reason]))}
     end.
