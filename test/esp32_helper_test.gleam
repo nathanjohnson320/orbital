@@ -2,9 +2,44 @@ import gleam/option
 import gleeunit
 import gleeunit/should
 import orbital/internal/esp32
+import orbital/internal/image_header
 
 pub fn main() -> Nil {
   gleeunit.main()
+}
+
+pub fn flash_size_id_keeps_frequency_nibble_test() {
+  image_header.flash_size_id(<<0xe9, 4, 2, 0x2f, 0, 0, 0, 0>>)
+  |> should.equal(Ok(0x20))
+
+  image_header.flash_size(<<0xe9, 4, 2, 0x2f>>)
+  |> should.equal(Ok(0x400000))
+
+  image_header.flash_size_id(<<0xe9, 4, 2, 0x3f, 0, 0, 0, 0>>)
+  |> should.equal(Ok(0x30))
+
+  image_header.flash_size(<<0xe9, 4, 2, 0x3f>>)
+  |> should.equal(Ok(0x800000))
+
+  image_header.flash_size_id(<<0xe9, 4, 2, 0x4f, 0, 0, 0, 0>>)
+  |> should.equal(Ok(0x40))
+
+  image_header.flash_size(<<0xe9, 4, 2, 0x4f>>)
+  |> should.equal(Ok(0x1000000))
+
+  image_header.flash_size_id(<<0xe9, 4, 2, 0x5f, 0, 0, 0, 0>>)
+  |> should.equal(Ok(0x50))
+
+  image_header.flash_size(<<0xe9, 4, 2, 0x5f>>)
+  |> should.equal(Ok(0x2000000))
+}
+
+pub fn flash_size_rejects_invalid_headers_test() {
+  image_header.flash_size(<<0xff, 0, 0, 0>>)
+  |> should.equal(Error(image_header.InvalidImageHeader))
+
+  image_header.flash_size(<<0xe9, 0, 0>>)
+  |> should.equal(Error(image_header.InvalidImageHeader))
 }
 
 pub fn format_device_summarises_atomvm_status_test() {
