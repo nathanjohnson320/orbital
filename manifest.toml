@@ -9,7 +9,7 @@
 packages = [
   { name = "argv", version = "1.0.2", build_tools = ["gleam"], requirements = [], otp_app = "argv", source = "hex", outer_checksum = "BA1FF0929525DEBA1CE67256E5ADF77A7CDDFE729E3E3F57A5BDCAA031DED09D" },
   { name = "atomvm_packbeam", version = "0.8.2", build_tools = ["rebar3"], requirements = [], otp_app = "atomvm_packbeam", source = "hex", outer_checksum = "E60A55E2184698EC485FB1D02166B4CD173BBCE5C99C7BCED49A6E9BE5F948AD" },
-  { name = "envoy", version = "1.1.0", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "envoy", source = "hex", outer_checksum = "850DA9D29D2E5987735872A2B5C81035146D7FE19EFC486129E44440D03FD832" },
+  { name = "envoy", version = "1.2.0", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "envoy", source = "hex", outer_checksum = "9C6FBB6BFA02A52798BEEC5977A738CAD6E4A057F4B67FD0C8061AD2502C191A" },
   { name = "exception", version = "2.1.0", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "exception", source = "hex", outer_checksum = "329D269D5C2A314F7364BD2711372B6F2C58FA6F39981572E5CA68624D291F8C" },
   { name = "filepath", version = "1.1.2", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "filepath", source = "hex", outer_checksum = "B06A9AF0BF10E51401D64B98E4B627F1D2E48C154967DA7AF4D0914780A6D40A" },
   { name = "glam", version = "2.0.3", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "glam", source = "hex", outer_checksum = "237C2CE218A2A0A5D46D625F8EF5B78F964BC91018B78D692B17E1AB84295229" },
@@ -30,11 +30,13 @@ packages = [
   { name = "temporary", version = "1.0.0", build_tools = ["gleam"], requirements = ["envoy", "exception", "filepath", "gleam_crypto", "gleam_stdlib", "simplifile"], otp_app = "temporary", source = "hex", outer_checksum = "51C0FEF4D72CE7CA507BD188B21C1F00695B3D5B09D7DFE38240BFD3A8E1E9B3" },
   { name = "term_size", version = "1.0.1", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "term_size", source = "hex", outer_checksum = "D00BD2BC8FB3EBB7E6AE076F3F1FF2AC9D5ED1805F004D0896C784D06C6645F1" },
   { name = "tom", version = "2.0.1", build_tools = ["gleam"], requirements = ["gleam_stdlib", "gleam_time"], otp_app = "tom", source = "hex", outer_checksum = "90791DA4AACE637E30081FE77049B8DB850FBC8CACC31515376BCC4E59BE1DD2" },
+  { name = "uf2tool", version = "1.1.0", build_tools = ["rebar3"], requirements = [], otp_app = "uf2tool", source = "hex", outer_checksum = "1A7E5CA7EF3D19C7A0B0ACF3DB804B3188E0980884ACFFA13FD57D733507B73D" },
 ]
 
 [requirements]
 argv = { version = ">= 1.0.2 and < 2.0.0" }
 atomvm_packbeam = { version = ">= 0.8.2 and < 1.0.0" }
+envoy = { version = ">= 1.1.0 and < 2.0.0" }
 filepath = { version = ">= 1.1.2 and < 2.0.0" }
 glam = { version = ">= 2.0.3 and < 3.0.0" }
 gleam_community_ansi = { version = ">= 1.4.4 and < 2.0.0" }
@@ -45,9 +47,10 @@ gleam_httpc = { version = ">= 5.0.0 and < 6.0.0" }
 gleam_json = { version = ">= 3.1.0 and < 4.0.0" }
 gleam_package_interface = { version = ">= 3.0.1 and < 4.0.0" }
 gleam_stdlib = { version = ">= 0.44.0 and < 2.0.0" }
-gleeunit = { version = ">= 1.0.0 and < 2.0.0" }
+gleeunit = { version = ">= 1.9.0 and < 2.0.0" }
 hoist = { version = ">= 1.0.0 and < 2.0.0" }
 simplifile = { version = ">= 2.4.0 and < 3.0.0" }
 temporary = { version = ">= 1.0.0 and < 2.0.0" }
 term_size = { version = ">= 1.0.1 and < 2.0.0" }
 tom = { version = ">= 2.0.1 and < 3.0.0" }
+uf2tool = { version = ">= 1.1.0 and < 2.0.0" }

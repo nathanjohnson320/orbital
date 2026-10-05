@@ -1,22 +1,27 @@
 -module(orbital_ffi).
 
 -export([
-    esp32_write_flash_parts/3,
-    esp32_write_flash_image/4,
-    esp32_select_device/1,
-    zip_list/1,
-    zip_get/2,
     packbeam_create/3,
     packbeam_list/1,
     run_executable/3,
     find_executable/1,
+    run_named_executable/2,
     monitor/4,
     esp32_list_devices/0,
     esp32_select_port/1,
+    esp32_select_device/1,
     esp32_erase_flash/1,
     esp32_read_flash/5,
     esp32_write_flash_data/3,
-    esp32_write_flash_size_and_partition/6
+    esp32_write_flash_image/4,
+    esp32_write_flash_parts/3,
+    esp32_write_flash_size_and_partition/6,
+    confirm/1,
+    zip_list/1,
+    zip_get/2,
+    uf2create/4,
+    os_family/0,
+    wildcard/1
 ]).
 
 packbeam_create(OutputPath, StartModule, Files) ->
@@ -83,6 +88,73 @@ find_executable(Name) ->
         Path -> {ok, unsafe_characters_to_binary(Path)}
     end.
 
+%% Run an executable by PATH name or absolute path (used for picotool).
+-spec run_named_executable(Name :: binary(), Arguments :: list(binary())) ->
+    {ok, integer()} | {error, nil}.
+run_named_executable(Name, Arguments) ->
+    case find_executable(Name) of
+        {ok, Path} -> run_executable(Path, <<".">>, Arguments);
+        {error, nil} ->
+            %% Absolute / relative path not necessarily on PATH.
+            case filelib:is_regular(unsafe_characters_to_list(Name)) of
+                true -> run_executable(Name, <<".">>, Arguments);
+                false -> {error, nil}
+            end
+    end.
+
+%% Create a UF2 from an AVM via uf2tool (same dependency ExAtomVM uses).
+-spec uf2create(
+    OutputPath :: binary(),
+    Family :: binary(),
+    StartAddr :: integer(),
+    ImagePath :: binary()
+) -> {ok, nil} | {error, binary()}.
+uf2create(OutputPath, Family, StartAddr, ImagePath) ->
+    case family_atom(Family) of
+        error -> {error, <<"unsupported family_id">>};
+        Fam ->
+            try uf2tool:uf2create(
+                    unicode:characters_to_list(OutputPath),
+                    Fam,
+                    StartAddr,
+                    unicode:characters_to_list(ImagePath)
+                )
+            of
+                ok -> {ok, nil}
+            catch
+                error:Reason -> {error, format_reason(Reason)};
+                throw:Reason -> {error, format_reason(Reason)};
+                exit:Reason -> {error, format_reason(Reason)}
+            end
+    end.
+
+family_atom(<<"rp2040">>) -> rp2040;
+family_atom(<<"rp2350_riscv">>) -> rp2350_riscv;
+family_atom(<<"rp2350_arm_s">>) -> rp2350_arm_s;
+family_atom(<<"rp2350_arm_ns">>) -> rp2350_arm_ns;
+family_atom(<<"absolute">>) -> absolute;
+family_atom(<<"data">>) -> data;
+family_atom(<<"universal">>) -> universal;
+family_atom(_) -> error.
+
+format_reason(Reason) ->
+    iolist_to_binary(io_lib:format("~p", [Reason])).
+
+-spec os_family() -> binary().
+os_family() ->
+    case os:type() of
+        {_, linux} -> <<"linux">>;
+        {_, darwin} -> <<"darwin">>;
+        _ -> <<"other">>
+    end.
+
+-spec wildcard(Pattern :: binary()) -> list(binary()).
+wildcard(Pattern) ->
+    [
+        unsafe_characters_to_binary(Path)
+     || Path <- filelib:wildcard(unsafe_characters_to_list(Pattern))
+    ].
+
 %% Shows the ESP32 console. The Python interpreter is taken from esptool's
 %% shebang, because that environment has pyserial.
 monitor(Port, Baud, Reset, Timeout) ->
@@ -115,6 +187,9 @@ esp32_list_devices() ->
 esp32_select_port(Port) ->
     run_esp32_json([<<"select-port">>, <<"--port">>, Port]).
 
+esp32_select_device(Port) ->
+    run_esp32_json([<<"select-device">>, <<"--port">>, Port]).
+
 esp32_erase_flash(Port) ->
     case run_esp32_collect([<<"erase-flash">>, <<"--port">>, Port]) of
         {ok, _Stdout} -> {ok, nil};
@@ -146,6 +221,35 @@ esp32_write_flash_data(Port, Address, FilePath) ->
         {error, Reason} -> {error, Reason}
     end.
 
+esp32_write_flash_image(Port, Baud, Address, FilePath) ->
+    case run_esp32_collect([
+        <<"write-flash-image">>,
+        <<"--port">>, Port,
+        <<"--baud">>, integer_to_binary(Baud),
+        <<"--address">>, integer_to_binary(Address),
+        <<"--file">>, FilePath
+    ]) of
+        {ok, _Stdout} -> {ok, nil};
+        {error, Reason} -> {error, Reason}
+    end.
+
+%% Parts is a list of {Address :: integer(), FilePath :: binary()}.
+
+esp32_write_flash_parts(Port, Baud, Parts) ->
+    PartArgs = lists:append([
+        [<<"--part">>, <<(integer_to_binary(Address))/binary, ":", FilePath/binary>>]
+     || {Address, FilePath} <- Parts
+    ]),
+    case run_esp32_collect([
+        <<"write-flash-parts">>,
+        <<"--port">>, Port,
+        <<"--baud">>, integer_to_binary(Baud)
+        | PartArgs
+    ]) of
+        {ok, _Stdout} -> {ok, nil};
+        {error, Reason} -> {error, Reason}
+    end.
+
 esp32_write_flash_size_and_partition(
     Port,
     BootloaderOffset,
@@ -165,6 +269,54 @@ esp32_write_flash_size_and_partition(
     ]) of
         {ok, _Stdout} -> {ok, nil};
         {error, Reason} -> {error, Reason}
+    end.
+
+confirm(Prompt) ->
+    io:put_chars(Prompt),
+    case io:get_line("") of
+        eof -> false;
+        {error, _} -> false;
+        Line ->
+            case string:trim(Line) of
+                "Y" -> true;
+                "y" -> true;
+                _ -> false
+            end
+    end.
+
+%% List member names inside a zip (OTP zip, memory mode).
+
+zip_list(ZipPath) ->
+    case zip:zip_open(unsafe_characters_to_list(ZipPath), [memory]) of
+        {ok, Handle} ->
+            try zip:zip_list_dir(Handle) of
+                {ok, Entries} ->
+                    Names = [unsafe_characters_to_binary(Name)
+                             || {zip_file, Name, _Info, _Comment, _Offset, _CompSize} <- Entries],
+                    {ok, Names};
+                {error, Reason} ->
+                    {error, iolist_to_binary(io_lib:format("~p", [Reason]))}
+            after
+                zip:zip_close(Handle)
+            end;
+        {error, Reason} ->
+            {error, iolist_to_binary(io_lib:format("~p", [Reason]))}
+    end.
+
+%% Read one zip member into a binary.
+
+zip_get(ZipPath, Member) ->
+    case zip:zip_open(unsafe_characters_to_list(ZipPath), [memory]) of
+        {ok, Handle} ->
+            try zip:zip_get(unsafe_characters_to_list(Member), Handle) of
+                {ok, {_Name, Bin}} when is_binary(Bin) -> {ok, Bin};
+                {error, Reason} ->
+                    {error, iolist_to_binary(io_lib:format("~p", [Reason]))}
+            after
+                zip:zip_close(Handle)
+            end;
+        {error, Reason} ->
+            {error, iolist_to_binary(io_lib:format("~p", [Reason]))}
     end.
 
 run_esp32_json(Args) ->
@@ -325,69 +477,4 @@ unsafe_characters_to_binary(Name) ->
     case unicode:characters_to_binary(Name) of
         Result when is_binary(Result) -> Result;
         Error -> throw({unsafe_characters_to_binary, Error})
-    end.
-
-%% List member names inside a zip (OTP zip, memory mode).
-
-zip_list(ZipPath) ->
-    case zip:zip_open(unsafe_characters_to_list(ZipPath), [memory]) of
-        {ok, Handle} ->
-            try zip:zip_list_dir(Handle) of
-                {ok, Entries} ->
-                    Names = [unsafe_characters_to_binary(Name)
-                             || {zip_file, Name, _Info, _Comment, _Offset, _CompSize} <- Entries],
-                    {ok, Names};
-                {error, Reason} ->
-                    {error, iolist_to_binary(io_lib:format("~p", [Reason]))}
-            after
-                zip:zip_close(Handle)
-            end;
-        {error, Reason} ->
-            {error, iolist_to_binary(io_lib:format("~p", [Reason]))}
-    end.
-
-%% Read one zip member into a binary.
-
-zip_get(ZipPath, Member) ->
-    case zip:zip_open(unsafe_characters_to_list(ZipPath), [memory]) of
-        {ok, Handle} ->
-            try zip:zip_get(unsafe_characters_to_list(Member), Handle) of
-                {ok, {_Name, Bin}} when is_binary(Bin) -> {ok, Bin};
-                {error, Reason} ->
-                    {error, iolist_to_binary(io_lib:format("~p", [Reason]))}
-            after
-                zip:zip_close(Handle)
-            end;
-        {error, Reason} ->
-            {error, iolist_to_binary(io_lib:format("~p", [Reason]))}
-    end.
-
-esp32_select_device(Port) ->
-    run_esp32_json([<<"select-device">>, <<"--port">>, Port]).
-
-esp32_write_flash_image(Port, Baud, Address, FilePath) ->
-    case run_esp32_collect([
-        <<"write-flash-image">>,
-        <<"--port">>, Port,
-        <<"--baud">>, integer_to_binary(Baud),
-        <<"--address">>, integer_to_binary(Address),
-        <<"--file">>, FilePath
-    ]) of
-        {ok, _Stdout} -> {ok, nil};
-        {error, Reason} -> {error, Reason}
-    end.
-
-esp32_write_flash_parts(Port, Baud, Parts) ->
-    PartArgs = lists:append([
-        [<<"--part">>, <<(integer_to_binary(Address))/binary, ":", FilePath/binary>>]
-     || {Address, FilePath} <- Parts
-    ]),
-    case run_esp32_collect([
-        <<"write-flash-parts">>,
-        <<"--port">>, Port,
-        <<"--baud">>, integer_to_binary(Baud)
-        | PartArgs
-    ]) of
-        {ok, _Stdout} -> {ok, nil};
-        {error, Reason} -> {error, Reason}
     end.

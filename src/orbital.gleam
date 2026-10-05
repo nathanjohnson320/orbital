@@ -13,10 +13,11 @@ import gleam/string
 import gleam_community/ansi
 import orbital/internal/cli
 import orbital/internal/esp32
+import orbital/internal/executable.{type ExecutablePath}
 import orbital/internal/image_header
 import orbital/internal/install
-import orbital/internal/executable.{type ExecutablePath}
 import orbital/internal/partition
+import orbital/internal/pico
 import orbital/internal/project.{
   type Project, CannotParseGleamToml, CannotReadGleamToml, CannotReadProjectName,
 }
@@ -60,18 +61,18 @@ pub fn main() -> Nil {
     Ok(cli.List(help: True, ..)) -> print_document(cli.list_help_text(True))
     Ok(cli.List(input_file:, help: False)) -> list(input_file)
 
+    Ok(cli.Uf2create(help: True, ..)) ->
+      print_document(cli.uf2create_help_text(True))
+    Ok(cli.Uf2create(output_file:, app_start:, family_id:, help: False)) ->
+      uf2create(output_file, app_start, family_id)
+
     Ok(cli.Monitor(help: True, ..)) ->
       print_document(cli.monitor_help_text(True))
     Ok(cli.Monitor(port:, baud:, timeout:, reset:, help: False)) ->
       monitor(port, baud, timeout, reset)
 
-    Ok(cli.Info(help: True)) -> print_document(cli.info_help_text(True))
-    Ok(cli.Info(help: False)) -> info()
-
-    Ok(cli.Expand(help: True, ..)) -> print_document(cli.expand_help_text(True))
-    Ok(cli.Expand(port:, help: False)) -> expand(port)
-
-    Ok(cli.Install(help: True, ..)) -> print_document(cli.install_help_text(True))
+    Ok(cli.Install(help: True, ..)) ->
+      print_document(cli.install_help_text(True))
     Ok(cli.Install(
       image:,
       version:,
@@ -96,17 +97,19 @@ pub fn main() -> Nil {
         port:,
       ))
 
+    Ok(cli.Expand(help: True, ..)) -> print_document(cli.expand_help_text(True))
+    Ok(cli.Expand(port:, help: False)) -> expand(port)
+
     Ok(cli.EraseFlash(help: True, ..)) ->
       print_document(cli.erase_flash_help_text(True))
     Ok(cli.EraseFlash(port:, help: False)) -> erase_flash(port)
 
+    Ok(cli.Info(help: True)) -> print_document(cli.info_help_text(True))
+    Ok(cli.Info(help: False)) -> info()
+
     // Flashing is the more involved step, and changes based on the device.
     Ok(cli.Flash(help: True, ..)) -> print_document(cli.flash_help_text(True))
     Ok(cli.Flash(help: False, platform:)) -> flash(platform)
-    //   flash_esp32_dry_run(port, baud)
-    // Ok(cli.Flash(help: False, platform: cli.Esp32(dry_run: False, port:, baud:))) ->
-    //   flash_esp32(port, baud)
-    // Ok(cli.Flash(help: False, platform: cli.Pico(port:))) -> flash_pico(port)
   }
 }
 
@@ -120,8 +123,14 @@ fn flash(platform: cli.FlashPlatform) -> Nil {
       use _ <- result.try(do_flash_esp32(port, baud, offset))
       Ok(True)
     }
-    cli.Pico(port:) -> {
-      use _ <- result.try(do_flash_pico(port))
+    cli.Pico(pico_path:, pico_reset:, picotool:, app_start:, family_id:) -> {
+      use _ <- result.try(do_flash_pico(
+        pico_path:,
+        pico_reset:,
+        picotool:,
+        app_start:,
+        family_id:,
+      ))
       Ok(True)
     }
   }
@@ -174,6 +183,21 @@ fn flash_esp32_dry_run(
   io.println("To flash the device I would run this command:\n\n" <> command)
 }
 
+fn run_install(options: install.Options) -> Nil {
+  case install.run(options) {
+    Ok(Nil) -> Nil
+    Error(install.Cancelled) -> exit(0)
+    Error(error) -> {
+      let message = install.error_message(error)
+      case message {
+        "" -> Nil
+        _ -> io.println(error_heading("install failed") <> "\n" <> message)
+      }
+      exit(1)
+    }
+  }
+}
+
 fn monitor(
   port: Option(String),
   baud: Option(Int),
@@ -194,31 +218,6 @@ fn monitor(
     Error("") -> exit(1)
     Error(reason) -> {
       io.println_error(reason)
-      exit(1)
-    }
-  }
-}
-
-fn info() -> Nil {
-  case esp32.list_devices() {
-    Ok(devices) -> io.println(esp32.format_info_report(devices))
-    Error(error) -> {
-      io.println(error_to_string(Esp32HelperError(error)))
-      exit(1)
-    }
-  }
-}
-
-fn run_install(options: install.Options) -> Nil {
-  case install.run(options) {
-    Ok(Nil) -> Nil
-    Error(install.Cancelled) -> exit(0)
-    Error(error) -> {
-      let message = install.error_message(error)
-      case message {
-        "" -> Nil
-        _ -> io.println(error_heading("install failed") <> "\n" <> message)
-      }
       exit(1)
     }
   }
@@ -413,41 +412,6 @@ fn format_byte_size(bytes: Int) -> String {
   int.to_string(bytes) <> " bytes (" <> partition.hex_address(bytes) <> ")"
 }
 
-
-fn expand_partition_error_message(reason: partition.Error) -> String {
-  case reason {
-    partition.InvalidPartitionTable ->
-      "The ESP32 returned an invalid partition table from flash offset 0x8000."
-    partition.CorruptPartitionData ->
-      "The partition table at flash offset 0x8000 contains corrupt data."
-    partition.PartitionNotFound(name) ->
-      "The device partition table does not contain a " <> name <> " partition."
-    partition.DuplicatePartition(name) ->
-      "The device partition table contains more than one "
-      <> name
-      <> " partition."
-    partition.InvalidPartitionType(name) ->
-      "The " <> name <> " entry is not a data partition."
-    partition.PartitionNotLast(name:, next:) ->
-      "Cannot expand "
-      <> name
-      <> " because partition "
-      <> next
-      <> " follows it.\nExpanding it would overwrite another partition."
-    partition.PartitionExceedsFlash(name) ->
-      "Partition " <> name <> " extends beyond the detected physical flash."
-    partition.OverlappingPartitions(first:, second:) ->
-      "Partitions "
-      <> first
-      <> " and "
-      <> second
-      <> " overlap; refusing to modify the table."
-    partition.InvalidFlashSize ->
-      "Esptool returned an invalid physical flash size."
-  }
-}
-
-
 fn erase_flash(port: Option(String)) -> Nil {
   let port = esp32.port_or_auto(port)
   case do_erase_flash(port) {
@@ -473,12 +437,41 @@ fn do_erase_flash(port: String) -> Result(String, Error) {
   Ok(resolved_port)
 }
 
+fn info() -> Nil {
+  case esp32.list_devices() {
+    Ok(devices) -> io.println(esp32.format_info_report(devices))
+    Error(error) -> {
+      io.println(error_to_string(Esp32HelperError(error)))
+      exit(1)
+    }
+  }
+}
+
 fn build(output_file: Option(String)) -> Nil {
   case do_build(output_file) {
     Ok(output_path) -> {
       let output_path = string.remove_prefix(output_path, "./")
       io.println(ansi.magenta(
         "⚛️  built your project to the '" <> output_path <> "' file!",
+      ))
+    }
+    Error(error) -> {
+      io.println(error_to_string(error))
+      exit(1)
+    }
+  }
+}
+
+fn uf2create(
+  output_file: Option(String),
+  app_start: Option(String),
+  family_id: Option(String),
+) -> Nil {
+  case do_uf2create(output_file, app_start, family_id) {
+    Ok(output_path) -> {
+      let output_path = string.remove_prefix(output_path, "./")
+      io.println(ansi.magenta(
+        "⚛️  created the '" <> output_path <> "' UF2 file!",
       ))
     }
     Error(error) -> {
@@ -538,26 +531,72 @@ fn do_flash_esp32(
   }
 }
 
-fn do_flash_pico(port: String) -> Result(Nil, Error) {
+fn do_flash_pico(
+  pico_path pico_path: Option(String),
+  pico_reset pico_reset: Option(String),
+  picotool picotool: Option(String),
+  app_start app_start: Option(String),
+  family_id family_id: Option(String),
+) -> Result(Nil, Error) {
+  use project <- result.try(
+    project.load()
+    |> result.map_error(CannotIdentifyProject),
+  )
   let outcome = {
     use directory <- temporary.create(temporary.directory())
-    let output_path = filepath.join(directory, "build.avm")
-    use output_path <- result.try(do_build(Some(output_path)))
+    let avm_path = filepath.join(directory, "build.avm")
+    let uf2_path = filepath.join(directory, project.name <> ".uf2")
+    use _ <- result.try(do_build(Some(avm_path)))
 
-    // If the root project was compiled successufully we're good to go: we can
-    // now pack all the produced `.beam` files into an `.avm` file ready to be
-    // flushed into the device.
-    use Nil <- try_step("Flashing the 'avm' file into the device...", fn() {
-      simplifile.copy(src: output_path, dest: filepath.join(port, "build.utf2"))
-      |> result.map_error(CannotFlashPico)
+    use Nil <- try_step("Creating the UF2 file...", fn() {
+      pico.create_uf2(
+        avm_path:,
+        uf2_path:,
+        options: pico.Uf2Options(app_start:, family_id:),
+      )
+      |> result.map_error(PicoError)
+    })
+    use Nil <- try_step("Flashing the UF2 onto the Pico...", fn() {
+      pico.flash_uf2(
+        uf2_path:,
+        options: pico.FlashOptions(pico_path:, pico_reset:, picotool:),
+      )
+      |> result.map_error(PicoError)
     })
     Ok(Nil)
   }
 
   case outcome {
     Ok(result) -> result
-    Error(reason) -> Error(CannotFlashPico(reason:))
+    Error(_) ->
+      Error(
+        PicoError(pico.CannotCreateUf2("could not create a temporary directory")),
+      )
   }
+}
+
+fn do_uf2create(
+  output_file: Option(String),
+  app_start: Option(String),
+  family_id: Option(String),
+) -> Result(String, Error) {
+  use project <- result.try(
+    project.load()
+    |> result.map_error(CannotIdentifyProject),
+  )
+  let avm_path = default_avm_file_name(project)
+  use _ <- result.try(do_build(Some(avm_path)))
+
+  let uf2_path = option.unwrap(output_file, default_uf2_file_name(project))
+  use Nil <- try_step("Creating the UF2 file...", fn() {
+    pico.create_uf2(
+      avm_path:,
+      uf2_path:,
+      options: pico.Uf2Options(app_start:, family_id:),
+    )
+    |> result.map_error(PicoError)
+  })
+  Ok(uf2_path)
 }
 
 /// Returns the path to the built file!
@@ -608,6 +647,11 @@ fn default_avm_file_name(project: Project) -> String {
   |> filepath.join(project.name <> ".avm")
 }
 
+fn default_uf2_file_name(project: Project) -> String {
+  project.root_directory
+  |> filepath.join(project.name <> ".uf2")
+}
+
 fn do_list(input_file: Option(String)) -> Result(Nil, Error) {
   use input_file <- result.try(case input_file {
     Some(input_file) -> Ok(input_file)
@@ -652,7 +696,7 @@ type Error {
   CannotFindEsptoolExecutable
 
   CannotFlashWithEsptool(esptool_status_code: Int)
-  CannotFlashPico(reason: simplifile.FileError)
+  PicoError(reason: pico.Error)
   EsptoolCannotOpenPort(port: String)
   CannotReadPartitionTable
   CannotFindMainPartition
@@ -673,11 +717,12 @@ fn error_to_string(error: Error) -> String {
     CannotFindEsptoolExecutable -> "missing 'esptool'"
     CannotFlashWithEsptool(_)
     | EsptoolCannotOpenPort(_)
-    | CannotFlashPico(_)
+    | PicoError(_)
     | CannotReadPartitionTable
     | CannotFindMainPartition -> "cannot flash device"
     Esp32HelperError(esp32.ToolingMissing(_)) -> "missing ESP32 tooling"
-    Esp32HelperError(esp32.DeviceError(_)) -> "cannot inspect ESP32 devices"
+    // Shared by info, erase-flash, expand, and later device commands.
+    Esp32HelperError(esp32.DeviceError(_)) -> "ESP32 device error"
     ExpandPartitionError(_)
     | ExpandImageHeaderError(_)
     | InvalidBootloaderOffset
@@ -734,8 +779,7 @@ fn error_to_string(error: Error) -> String {
       <> int.to_string(esptool_status_code)
       <> "."
 
-    CannotFlashPico(reason: _) ->
-      "I couldn't flash your pico device because of an unexpected error."
+    PicoError(reason:) -> pico.error_message(reason)
 
     EsptoolCannotOpenPort(port:) ->
       "The port '"
@@ -761,19 +805,19 @@ fn error_to_string(error: Error) -> String {
     ExpandPartitionError(reason:) -> expand_partition_error_message(reason)
 
     ExpandImageHeaderError(image_header.InvalidImageHeader) ->
-      "The bootloader image header on the device is invalid or truncated."
+      "The ESP32 bootloader image header is invalid."
 
     ExpandImageHeaderError(image_header.UnsupportedFlashSize) ->
-      "Detected flash size is not one of the expandable sizes (8MB, 16MB, 32MB)."
+      "The ESP32 bootloader declares an unsupported flash size."
 
-    InvalidBootloaderOffset ->
-      "The bootloader offset on this chip is not supported for expand."
+    InvalidBootloaderOffset -> "Esptool returned an invalid bootloader offset."
 
     ExpandStagingFailed ->
-      "I couldn't prepare temporary files for the expanded partition table."
+      "I couldn't prepare the bootloader or partition table for writing.\n"
+      <> bug_report_call_to_action()
 
     ExpandVerificationFailed ->
-      "Verification failed after writing the expanded partition table."
+      "Bootloader or partition table verification failed after flashing."
 
     OutputFileIsDirectory(file:) ->
       "'"
@@ -819,6 +863,39 @@ fn error_to_string(error: Error) -> String {
   }
 
   error_heading(title) <> "\n" <> body
+}
+
+fn expand_partition_error_message(reason: partition.Error) -> String {
+  case reason {
+    partition.InvalidPartitionTable ->
+      "The ESP32 returned an invalid partition table from flash offset 0x8000."
+    partition.CorruptPartitionData ->
+      "The partition table at flash offset 0x8000 contains corrupt data."
+    partition.PartitionNotFound(name) ->
+      "The device partition table does not contain a " <> name <> " partition."
+    partition.DuplicatePartition(name) ->
+      "The device partition table contains more than one "
+      <> name
+      <> " partition."
+    partition.InvalidPartitionType(name) ->
+      "The " <> name <> " entry is not a data partition."
+    partition.PartitionNotLast(name:, next:) ->
+      "Cannot expand "
+      <> name
+      <> " because partition "
+      <> next
+      <> " follows it.\nExpanding it would overwrite another partition."
+    partition.PartitionExceedsFlash(name) ->
+      "Partition " <> name <> " extends beyond the detected physical flash."
+    partition.OverlappingPartitions(first:, second:) ->
+      "Partitions "
+      <> first
+      <> " and "
+      <> second
+      <> " overlap; refusing to modify the table."
+    partition.InvalidFlashSize ->
+      "Esptool returned an invalid physical flash size."
+  }
 }
 
 fn bug_report_call_to_action() -> String {
