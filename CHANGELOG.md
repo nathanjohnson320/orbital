@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added ESP32 firmware bundle verify/update helpers (FLASH.txt, bootloader checks).
 - Added ESP32 firmware image naming/classify helpers for AtomVM install.
 - Added an `expand` command that grows the final `main.avm` partition to the end
   of detected ESP32 flash and updates the bootloader flash-size header.
