@@ -18,6 +18,7 @@ import orbital/internal/image_header
 import orbital/internal/install
 import orbital/internal/partition
 import orbital/internal/pico
+import orbital/internal/pico_install
 import orbital/internal/project.{
   type Project, CannotParseGleamToml, CannotReadGleamToml, CannotReadProjectName,
 }
@@ -95,6 +96,32 @@ pub fn main() -> Nil {
         chip:,
         baud: option.unwrap(baud, default_baud),
         port:,
+      ))
+
+    Ok(cli.InstallPico(help: True, ..)) ->
+      print_document(cli.install_help_text(True))
+    Ok(cli.InstallPico(
+      board:,
+      image:,
+      version:,
+      repo:,
+      download_only:,
+      list_images:,
+      pico_path:,
+      pico_reset:,
+      picotool:,
+      help: False,
+    )) ->
+      run_pico_install(pico_install.Options(
+        board:,
+        image:,
+        version:,
+        repo:,
+        download_only:,
+        list_images:,
+        pico_path:,
+        pico_reset:,
+        picotool:,
       ))
 
     Ok(cli.Expand(help: True, ..)) -> print_document(cli.expand_help_text(True))
@@ -189,6 +216,21 @@ fn run_install(options: install.Options) -> Nil {
     Error(install.Cancelled) -> exit(0)
     Error(error) -> {
       let message = install.error_message(error)
+      case message {
+        "" -> Nil
+        _ -> io.println(error_heading("install failed") <> "\n" <> message)
+      }
+      exit(1)
+    }
+  }
+}
+
+fn run_pico_install(options: pico_install.Options) -> Nil {
+  case pico_install.run(options) {
+    Ok(Nil) -> Nil
+    Error(pico_install.Cancelled) -> exit(0)
+    Error(error) -> {
+      let message = pico_install.error_message(error)
       case message {
         "" -> Nil
         _ -> io.println(error_heading("install failed") <> "\n" <> message)

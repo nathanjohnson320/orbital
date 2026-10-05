@@ -2,21 +2,36 @@
 
 ## Unreleased
 
-- Added `install` to download/install/update AtomVM on ESP32 boards.
-- Added Gleam firmware_fetch for AtomVM GitHub list/download/cache.
-- Added ESP32 firmware bundle verify/update helpers (FLASH.txt, bootloader checks).
-- Added ESP32 firmware image naming/classify helpers for AtomVM install.
+- Pico `install pico` downloads AtomVM UF2s (prefers `-combined`), caches under
+  `firmware_images/`, and loads with `picotool` (`load -f`) falling back to
+  UF2 volume copy. Flags: `--board`, `--image`, `--version`, `--repo`,
+  `--list-images`, `--download-only`, `--pico-path`, `--pico-reset`,
+  `--picotool`.
+- Pico flash parity with ExAtomVM: `flash pico` builds a UF2 (via `uf2tool`),
+  optionally resets into BOOTSEL (`stty` / `picotool`), waits for the mount, and
+  copies the UF2. Flags: `--pico-path`, `--pico-reset`, `--picotool`,
+  `--app-start` (default `0x10180000`), `--family-id` (default `universal`).
+- Added `uf2create` to build a Pico UF2 without flashing
+  (`--output-file`, `--app-start`, `--family-id`).
+- Added `install` to download/install/update AtomVM on ESP32 boards
+  (`--image`, `--version`, `--repo`, `--update`, `--download-only`,
+  `--list-images`, `--chip`, `--port`, `--baud`), with firmware caching under
+  `firmware_images/` and ExAtomVM-compatible update guardrails. Listing and
+  download use Gleam (`gleam_httpc` / `gleam_json`); only zip member reads and
+  ESP32 device I/O still go through thin Erlang / `priv/esp32.py` helpers.
+  Parity fixes vs ExAtomVM: exact-chip Elixir release selection, factory zip
+  bundle verification + FLASH.txt update parts, reject `--download-only` with a
+  local path, and richer `--list-images` rendering.
 - Added an `expand` command that grows the final `main.avm` partition to the end
   of detected ESP32 flash and updates the bootloader flash-size header.
 - Orbital now has an `info` command to list connected ESP32 boards and AtomVM
   install status.
 - Orbital now has an `erase-flash` command to wipe an ESP32 board's flash.
-- Extended partition-table parsing with `main.avm` expansion helpers and added
-  ESP32 image-header flash-size helpers for upcoming expand support.
 - Added shared ESP32 device helpers (`orbital/internal/esp32`) backed by
   `priv/esp32.py` for listing devices, selecting a port, erasing flash, and
-  reading/writing flash regions. Follow-up PRs will wire the `install` command.
-
+  reading/writing flash regions.
+- Extended partition-table parsing with `main.avm` expansion helpers and added
+  ESP32 image-header flash-size helpers for upcoming expand support.
 - ESP32 flash reads the device partition table and writes the application at
   the `main.avm` address. `--offset` selects a different address.
 - The ESP32 flash command lets esptool auto-detect the serial port when

@@ -1,6 +1,6 @@
 import gleam/option.{None, Some}
 import gleeunit
-import orbital/internal/cli.{Install}
+import orbital/internal/cli.{Install, InstallPico}
 
 pub fn main() -> Nil {
   gleeunit.main()
@@ -109,6 +109,71 @@ pub fn install_rejects_chip_with_download_only_and_image_test() {
       "--chip",
       "esp32",
     ])
+}
+
+pub fn install_pico_requires_board_or_image_test() {
+  let assert Error(cli.ConflictingFlags(_)) = cli.parse(["install", "pico"])
+}
+
+pub fn install_pico_board_defaults_test() {
+  let assert Ok(InstallPico(
+    board:,
+    image:,
+    version:,
+    repo:,
+    download_only: False,
+    list_images: False,
+    pico_path:,
+    pico_reset:,
+    picotool:,
+    help: False,
+  )) = cli.parse(["install", "pico", "--board", "pico_w"])
+
+  assert board == Some("pico_w")
+  assert image == None
+  assert version == None
+  assert repo == None
+  assert pico_path == None
+  assert pico_reset == None
+  assert picotool == None
+}
+
+pub fn install_pico_flags_test() {
+  let assert Ok(InstallPico(
+    board:,
+    image:,
+    version:,
+    download_only: True,
+    list_images: False,
+    pico_path:,
+    picotool:,
+    ..,
+  )) =
+    cli.parse([
+      "install",
+      "pico",
+      "--board",
+      "pico2",
+      "--version",
+      "v0.7.0-beta.0",
+      "--download-only",
+      "--pico-path",
+      "/Volumes/RP2350",
+      "--picotool",
+      "/usr/bin/picotool",
+    ])
+
+  assert board == Some("pico2")
+  assert image == None
+  assert version == Some("v0.7.0-beta.0")
+  assert pico_path == Some("/Volumes/RP2350")
+  assert picotool == Some("/usr/bin/picotool")
+}
+
+pub fn install_pico_list_images_test() {
+  let assert Ok(InstallPico(list_images: True, board:, ..)) =
+    cli.parse(["install", "pico", "--list-images", "--board", "pico"])
+  assert board == Some("pico")
 }
 
 pub fn install_esp32_platform_alias_test() {
