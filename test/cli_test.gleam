@@ -1,6 +1,6 @@
 import gleam/option.{None, Some}
 import gleeunit
-import orbital/internal/cli.{EraseFlash, Esp32, Flash, Monitor}
+import orbital/internal/cli.{EraseFlash, Esp32, Flash, Info, Monitor}
 
 pub fn main() -> Nil {
   gleeunit.main()
@@ -77,4 +77,12 @@ pub fn erase_flash_accepts_an_explicit_port_test() {
 pub fn erase_flash_help_test() {
   let assert Ok(EraseFlash(help: True, ..)) =
     cli.parse(["erase-flash", "--help"])
+}
+
+pub fn info_defaults_test() {
+  let assert Ok(Info(help: False)) = cli.parse(["info"])
+}
+
+pub fn info_help_test() {
+  let assert Ok(Info(help: True)) = cli.parse(["info", "--help"])
 }

@@ -23,6 +23,7 @@ pub type Command {
     help: Bool,
   )
   EraseFlash(port: Option(String), help: Bool)
+  Info(help: Bool)
 }
 
 /// `offset` is the flash address of `main.avm`. `None` means read that address
@@ -47,6 +48,7 @@ pub type ParsingState {
   ParsingList
   ParsingMonitor
   ParsingEraseFlash
+  ParsingInfo
 }
 
 pub type CustomError {
@@ -184,6 +186,9 @@ pub fn parse(args: List(String)) -> Result(Command, Error) {
         }
       }
 
+    Ok(hoist.Args(arguments: ["info"], flags:)) ->
+      Ok(Info(help: toggled(flags, "help")))
+
     Ok(hoist.Args(arguments: ["erase-flash"], flags:)) ->
       case toggled(flags, "help") {
         True -> Ok(EraseFlash(port: None, help: True))
@@ -222,6 +227,7 @@ fn parse_args(
 
       "list", ParsingBase -> Ok(#(ParsingList, list_flags()))
       "monitor", ParsingBase -> Ok(#(ParsingMonitor, monitor_flags()))
+      "info", ParsingBase -> Ok(#(ParsingInfo, info_flags()))
       "erase-flash", ParsingBase ->
         Ok(#(ParsingEraseFlash, erase_flash_flags()))
       "help", ParsingBase -> Ok(#(ParsingHelp, help_flags()))
@@ -240,6 +246,8 @@ fn parse_args(
       _, ParsingMonitor -> Error(UnknownCommand(command:))
 
       // The "erase-flash" command accepts no subcommands
+      _, ParsingInfo -> Error(UnknownCommand(command:))
+
       _, ParsingEraseFlash -> Error(UnknownCommand(command:))
 
       // The "flash" command takes positional arguments, but no subcommands, so
@@ -346,6 +354,16 @@ fn monitor_flags() -> ValidatedFlagSpecs {
         |> hoist.as_toggle,
     ])
   monitor_flags
+}
+
+fn info_flags() -> ValidatedFlagSpecs {
+  let assert Ok(info_flags) =
+    hoist.validate_flag_specs([
+      hoist.new_flag("help")
+        |> hoist.with_short_alias("h")
+        |> hoist.as_toggle,
+    ])
+  info_flags
 }
 
 fn erase_flash_flags() -> ValidatedFlagSpecs {
@@ -670,6 +688,29 @@ pub fn monitor_help_text(description: Bool) -> Document {
   |> doc.group
 }
 
+pub fn info_help_text(description: Bool) -> Document {
+  [
+    case description {
+      False -> doc.empty
+      True ->
+        "List connected ESP32 boards and whether AtomVM is installed on them."
+        |> flex_text
+        |> doc.append(doc.lines(2))
+    },
+    doc.from_string(
+      ansi.magenta("Usage: ")
+      <> ansi.green("gleam run -m orbital ")
+      <> "info <FLAGS>",
+    ),
+    doc.lines(2),
+    doc.from_string(ansi.magenta("Flags:")),
+    doc.line,
+    flag_line("  -h, --help  ", "show this help text"),
+  ]
+  |> doc.concat
+  |> doc.group
+}
+
 pub fn erase_flash_help_text(description: Bool) -> Document {
   [
     case description {
@@ -707,6 +748,7 @@ pub fn help_text_for_state(state: ParsingState) -> Document {
     ParsingBuild -> build_help_text(False)
     ParsingList -> list_help_text(False)
     ParsingMonitor -> monitor_help_text(False)
+    ParsingInfo -> info_help_text(False)
     ParsingEraseFlash -> erase_flash_help_text(False)
   }
 }

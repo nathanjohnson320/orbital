@@ -63,6 +63,9 @@ pub fn main() -> Nil {
     Ok(cli.Monitor(port:, baud:, timeout:, reset:, help: False)) ->
       monitor(port, baud, timeout, reset)
 
+    Ok(cli.Info(help: True)) -> print_document(cli.info_help_text(True))
+    Ok(cli.Info(help: False)) -> info()
+
     Ok(cli.EraseFlash(help: True, ..)) ->
       print_document(cli.erase_flash_help_text(True))
     Ok(cli.EraseFlash(port:, help: False)) -> erase_flash(port)
@@ -161,6 +164,16 @@ fn monitor(
     Error("") -> exit(1)
     Error(reason) -> {
       io.println_error(reason)
+      exit(1)
+    }
+  }
+}
+
+fn info() -> Nil {
+  case esp32.list_devices() {
+    Ok(devices) -> io.println(esp32.format_info_report(devices))
+    Error(error) -> {
+      io.println(error_to_string(Esp32HelperError(error)))
       exit(1)
     }
   }
@@ -390,7 +403,7 @@ fn error_to_string(error: Error) -> String {
     | CannotReadPartitionTable
     | CannotFindMainPartition -> "cannot flash device"
     Esp32HelperError(esp32.ToolingMissing(_)) -> "missing ESP32 tooling"
-    Esp32HelperError(esp32.DeviceError(_)) -> "cannot erase flash"
+    Esp32HelperError(esp32.DeviceError(_)) -> "cannot inspect ESP32 devices"
     OutputFileIsDirectory(_) -> "invalid output file"
     CannotReadAvmFile(_) -> "cannot read the 'avm' file"
 
