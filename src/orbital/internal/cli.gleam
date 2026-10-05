@@ -25,7 +25,7 @@ pub type Command {
 }
 
 pub type FlashPlatform {
-  Esp32(port: String, baud: Option(Int), dry_run: Bool)
+  Esp32(port: Option(String), baud: Option(Int), dry_run: Bool)
   Pico(port: String)
 }
 
@@ -88,13 +88,13 @@ pub fn parse(args: List(String)) -> Result(Command, Error) {
 
     // with "flash" we need a little additional checks: first we need to make
     // sure that the required platform positional argument was provided.
-    // Then we have to make sure that the "port" flag exists, that is mandatory.
-    // Finally, if "baud" was provided we need to validate that it's an Int.
+    // If "baud" was provided we need to validate that it's an Int. The ESP32
+    // port is optional: esptool auto-detects it when `--port` is omitted.
     Ok(hoist.Args(arguments: ["flash", ..rest], flags:)) ->
       case toggled(flags, "help"), rest {
         True, _ ->
           Ok(Flash(
-            platform: Esp32(port: "port", baud: None, dry_run: False),
+            platform: Esp32(port: None, baud: None, dry_run: False),
             help: True,
           ))
 
@@ -113,10 +113,16 @@ pub fn parse(args: List(String)) -> Result(Command, Error) {
         }
 
         False, ["esp32"] -> {
-          use port <- require_flag(flags, ParsingFlash, "port")
           use baud <- optional_int_flag(flags, ParsingFlash, "baud")
           let dry_run = toggled(flags, "dry-run")
-          Ok(Flash(platform: Esp32(port:, baud:, dry_run:), help: False))
+          Ok(Flash(
+            platform: Esp32(
+              port: option.from_result(find_flag_value(flags, "port")),
+              baud:,
+              dry_run:,
+            ),
+            help: False,
+          ))
         }
 
         False, [platform] -> Error(InvalidFlashPlatform(platform))
@@ -415,7 +421,7 @@ pub fn flash_help_text(description: Bool) -> Document {
     doc.line,
     flag_line(
       "    -p, --port     <STRING>  ",
-      "the path where to find the esp device",
+      "serial port. esptool auto-detects it when omitted",
     ),
     doc.line,
     flag_line_with_default(
