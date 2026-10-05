@@ -195,6 +195,36 @@ pub fn write_flash_bytes(
 }
 
 /// Format a device summary line for CLIs (`info`, install prompts, etc.).
+pub fn select_device(port: String) -> Result(Device, Error) {
+  use raw <- result.try(select_device_ffi(port) |> map_ffi_error)
+  case json.parse(raw, device_decoder()) {
+    Ok(device) -> Ok(device)
+    Error(_) ->
+      Error(DeviceError(
+        reason: "ESP32 helper select-device returned invalid JSON.",
+      ))
+  }
+}
+
+pub fn write_flash_image(
+  port port: String,
+  baud baud: Int,
+  address address: Int,
+  file_path file_path: String,
+) -> Result(Nil, Error) {
+  write_flash_image_ffi(port, baud, address, file_path)
+  |> map_ffi_error
+}
+
+pub fn write_flash_parts(
+  port port: String,
+  baud baud: Int,
+  parts parts: List(#(Int, String)),
+) -> Result(Nil, Error) {
+  write_flash_parts_ffi(port, baud, parts)
+  |> map_ffi_error
+}
+
 pub fn format_device(device: Device) -> String {
   let atomvm = case device.atomvm_installed {
     True -> "AtomVM"
@@ -414,4 +444,22 @@ fn write_flash_size_and_partition_ffi(
   partition_offset: Int,
   partition_path: String,
   flash_size_name: String,
+) -> Result(Nil, String)
+
+@external(erlang, "orbital_ffi", "esp32_select_device")
+fn select_device_ffi(port: String) -> Result(String, String)
+
+@external(erlang, "orbital_ffi", "esp32_write_flash_image")
+fn write_flash_image_ffi(
+  port: String,
+  baud: Int,
+  address: Int,
+  file_path: String,
+) -> Result(Nil, String)
+
+@external(erlang, "orbital_ffi", "esp32_write_flash_parts")
+fn write_flash_parts_ffi(
+  port: String,
+  baud: Int,
+  parts: List(#(Int, String)),
 ) -> Result(Nil, String)

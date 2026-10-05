@@ -2,6 +2,7 @@ import glam/doc.{type Document}
 import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/result
 import gleam/string
 import gleam_community/ansi
 import hoist.{type ValidatedFlagSpecs}
@@ -25,6 +26,18 @@ pub type Command {
   EraseFlash(port: Option(String), help: Bool)
   Info(help: Bool)
   Expand(port: Option(String), help: Bool)
+  Install(
+    image: Option(String),
+    version: Option(String),
+    repo: Option(String),
+    update: Bool,
+    download_only: Bool,
+    list_images: Bool,
+    chip: Option(String),
+    baud: Option(Int),
+    port: Option(String),
+    help: Bool,
+  )
 }
 
 /// `offset` is the flash address of `main.avm`. `None` means read that address
@@ -51,6 +64,7 @@ pub type ParsingState {
   ParsingEraseFlash
   ParsingInfo
   ParsingExpand
+  ParsingInstall
 }
 
 pub type CustomError {
@@ -58,6 +72,7 @@ pub type CustomError {
 }
 
 pub type Error {
+  ConflictingFlags(message: String)
   HoistError(state: ParsingState, error: hoist.ParseError(CustomError))
   InvalidFlashPlatform(platform: String)
   MissingRequiredPositionalArgument(state: ParsingState, argument: String)
@@ -191,6 +206,43 @@ pub fn parse(args: List(String)) -> Result(Command, Error) {
     Ok(hoist.Args(arguments: ["info"], flags:)) ->
       Ok(Info(help: toggled(flags, "help")))
 
+    
+    Ok(hoist.Args(arguments: ["install"], flags:)) ->
+      case toggled(flags, "help") {
+        True ->
+          Ok(Install(
+            image: None,
+            version: None,
+            repo: None,
+            update: False,
+            download_only: False,
+            list_images: False,
+            chip: None,
+            baud: None,
+            port: None,
+            help: True,
+          ))
+        False -> parse_esp32_install(flags, ParsingInstall)
+      }
+
+    Ok(hoist.Args(arguments: ["install", "esp32"], flags:)) ->
+      case toggled(flags, "help") {
+        True ->
+          Ok(Install(
+            image: None,
+            version: None,
+            repo: None,
+            update: False,
+            download_only: False,
+            list_images: False,
+            chip: None,
+            baud: None,
+            port: None,
+            help: True,
+          ))
+        False -> parse_esp32_install(flags, ParsingInstall)
+      }
+
     Ok(hoist.Args(arguments: ["expand"], flags:)) ->
       case toggled(flags, "help") {
         True -> Ok(Expand(port: None, help: True))
@@ -242,6 +294,8 @@ fn parse_args(
       "monitor", ParsingBase -> Ok(#(ParsingMonitor, monitor_flags()))
       "info", ParsingBase -> Ok(#(ParsingInfo, info_flags()))
       "expand", ParsingBase -> Ok(#(ParsingExpand, expand_flags()))
+      "install", ParsingBase -> Ok(#(ParsingInstall, install_flags()))
+      "esp32", ParsingInstall -> Ok(#(ParsingInstall, install_flags()))
       "erase-flash", ParsingBase ->
         Ok(#(ParsingEraseFlash, erase_flash_flags()))
       "help", ParsingBase -> Ok(#(ParsingHelp, help_flags()))
@@ -263,6 +317,8 @@ fn parse_args(
       _, ParsingInfo -> Error(UnknownCommand(command:))
 
       _, ParsingExpand -> Error(UnknownCommand(command:))
+
+      _, ParsingInstall -> Ok(#(state, flags))
 
       _, ParsingEraseFlash -> Error(UnknownCommand(command:))
 
@@ -370,6 +426,160 @@ fn monitor_flags() -> ValidatedFlagSpecs {
         |> hoist.as_toggle,
     ])
   monitor_flags
+}
+
+fn parse_esp32_install(
+  flags: List(hoist.Flag),
+  state: ParsingState,
+) -> Result(Command, Error) {
+  use baud <- optional_int_flag(flags, state, "baud")
+  let image = option.from_result(find_flag_value(flags, "image"))
+  let version = option.from_result(find_flag_value(flags, "version"))
+  let repo = option.from_result(find_flag_value(flags, "repo"))
+  let chip = option.from_result(find_flag_value(flags, "chip"))
+  let update = toggled(flags, "update")
+  let download_only = toggled(flags, "download-only")
+  let list_images = toggled(flags, "list-images")
+  use Nil <- result.try(validate_install_flags(
+    image:,
+    version:,
+    update:,
+    download_only:,
+    list_images:,
+    chip:,
+  ))
+  case baud {
+    Some(baud) if baud < 1 ->
+      Error(InvalidFlagValue(
+        state:,
+        flag: "baud",
+        value: int.to_string(baud),
+        expected: "an integer greater than zero",
+      ))
+    _ ->
+      Ok(Install(
+        image:,
+        version:,
+        repo:,
+        update:,
+        download_only:,
+        list_images:,
+        chip:,
+        baud:,
+        port: option.from_result(find_flag_value(flags, "port")),
+        help: False,
+      ))
+  }
+}
+fn install_flags() -> ValidatedFlagSpecs {
+  let assert Ok(install_flags) =
+    hoist.validate_flag_specs([
+      hoist.new_flag("image"),
+      hoist.new_flag("version"),
+      hoist.new_flag("repo"),
+      hoist.new_flag("update")
+        |> hoist.as_toggle,
+      hoist.new_flag("download-only")
+        |> hoist.as_toggle,
+      hoist.new_flag("list-images")
+        |> hoist.as_toggle,
+      hoist.new_flag("chip"),
+      hoist.new_flag("baud")
+        |> hoist.with_short_alias("b"),
+      hoist.new_flag("port")
+        |> hoist.with_short_alias("p"),
+      hoist.new_flag("help")
+        |> hoist.with_short_alias("h")
+        |> hoist.as_toggle,
+    ])
+  install_flags
+}
+fn validate_install_flags(
+  image image: Option(String),
+  version version: Option(String),
+  update update: Bool,
+  download_only download_only: Bool,
+  list_images list_images: Bool,
+  chip chip: Option(String),
+) -> Result(Nil, Error) {
+  case list_images {
+    True ->
+      case
+        option.is_some(image)
+        || option.is_some(version)
+        || update
+        || download_only
+      {
+        True ->
+          Error(ConflictingFlags(
+            "--list-images cannot be combined with --image, --version, --update or --download-only",
+          ))
+        False -> Ok(Nil)
+      }
+    False ->
+      case download_only && update {
+        True ->
+          Error(ConflictingFlags(
+            "--download-only and --update cannot be used together",
+          ))
+        False ->
+          case option.is_some(image) && option.is_some(version) {
+            True ->
+              Error(ConflictingFlags(
+                "--image and --version cannot be used together",
+              ))
+            False ->
+              case chip, download_only, image {
+                Some(_), True, None -> Ok(Nil)
+                Some(_), _, _ ->
+                  Error(ConflictingFlags(
+                    "--chip only applies to --list-images, and to --download-only without --image",
+                  ))
+                None, _, _ -> Ok(Nil)
+              }
+          }
+      }
+  }
+}
+pub fn install_help_text(description: Bool) -> Document {
+  [
+    case description {
+      False -> doc.empty
+      True ->
+        "Install AtomVM firmware on a connected ESP32 board."
+        |> flex_text
+        |> doc.append(doc.lines(2))
+    },
+    doc.from_string(
+      ansi.magenta("Usage: ")
+      <> ansi.green("gleam run -m orbital ")
+      <> "install <FLAGS>",
+    ),
+    doc.lines(2),
+    doc.from_string(ansi.magenta("Flags:")),
+    doc.line,
+    flag_line("  --image <NAME|PATH>   ", "image name or local .img/.zip path"),
+    doc.line,
+    flag_line("  --version <TAG>       ", "AtomVM release tag"),
+    doc.line,
+    flag_line("  --repo <OWNER/REPO>   ", "additional GitHub image source"),
+    doc.line,
+    flag_line("  --update              ", "replace VM and boot.avm only"),
+    doc.line,
+    flag_line("  --download-only       ", "download image without flashing"),
+    doc.line,
+    flag_line("  --list-images         ", "list installable images"),
+    doc.line,
+    flag_line("  --chip <CHIP>         ", "target chip when no board is connected"),
+    doc.line,
+    flag_line("  -b, --baud <INT>      ", "flash baud rate"),
+    doc.line,
+    flag_line("  -p, --port <STRING>   ", "serial port"),
+    doc.line,
+    flag_line("  -h, --help            ", "show this help text"),
+  ]
+  |> doc.concat
+  |> doc.group
 }
 
 fn expand_flags() -> ValidatedFlagSpecs {
@@ -806,6 +1016,7 @@ pub fn help_text_for_state(state: ParsingState) -> Document {
     ParsingMonitor -> monitor_help_text(False)
     ParsingInfo -> info_help_text(False)
     ParsingExpand -> expand_help_text(False)
+    ParsingInstall -> install_help_text(False)
     ParsingEraseFlash -> erase_flash_help_text(False)
   }
 }
@@ -858,6 +1069,13 @@ fn error_heading(title: String) -> Document {
 
 pub fn error_to_document(error: Error) -> Document {
   case error {
+    ConflictingFlags(message:) ->
+      doc.concat([
+        error_heading("conflicting flags"),
+        doc.lines(2),
+        flex_text(message),
+      ])
+
     MissingRequiredPositionalArgument(state:, argument:) ->
       doc.concat([
         error_heading("missing argument " <> argument),

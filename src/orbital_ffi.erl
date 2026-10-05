@@ -1,6 +1,9 @@
 -module(orbital_ffi).
 
 -export([
+    esp32_write_flash_parts/3,
+    esp32_write_flash_image/4,
+    esp32_select_device/1,
     zip_list/1,
     zip_get/2,
     packbeam_create/3,
@@ -357,4 +360,34 @@ zip_get(ZipPath, Member) ->
             end;
         {error, Reason} ->
             {error, iolist_to_binary(io_lib:format("~p", [Reason]))}
+    end.
+
+esp32_select_device(Port) ->
+    run_esp32_json([<<"select-device">>, <<"--port">>, Port]).
+
+esp32_write_flash_image(Port, Baud, Address, FilePath) ->
+    case run_esp32_collect([
+        <<"write-flash-image">>,
+        <<"--port">>, Port,
+        <<"--baud">>, integer_to_binary(Baud),
+        <<"--address">>, integer_to_binary(Address),
+        <<"--file">>, FilePath
+    ]) of
+        {ok, _Stdout} -> {ok, nil};
+        {error, Reason} -> {error, Reason}
+    end.
+
+esp32_write_flash_parts(Port, Baud, Parts) ->
+    PartArgs = lists:append([
+        [<<"--part">>, <<(integer_to_binary(Address))/binary, ":", FilePath/binary>>]
+     || {Address, FilePath} <- Parts
+    ]),
+    case run_esp32_collect([
+        <<"write-flash-parts">>,
+        <<"--port">>, Port,
+        <<"--baud">>, integer_to_binary(Baud)
+        | PartArgs
+    ]) of
+        {ok, _Stdout} -> {ok, nil};
+        {error, Reason} -> {error, Reason}
     end.

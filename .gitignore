@@ -2,3 +2,8 @@
 *.ez
 /build
 erl_crash.dump
+/firmware_images
+/_build/atomvm_update
+/_build/atomvm_images
+priv/__pycache__/
+*.pyc

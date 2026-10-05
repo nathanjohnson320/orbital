@@ -9,7 +9,10 @@ Subcommands:
   select-port --port PORT|auto
   erase-flash --port PORT|auto
   read-flash --port PORT --address HEX|INT --size HEX|INT --output PATH [--reset-after]
+  select-device --port PORT|auto
   write-flash-data --port PORT --address HEX|INT --file PATH
+  write-flash-image --port PORT --baud BAUD --address HEX|INT --file PATH
+  write-flash-parts --port PORT --baud BAUD --part ADDRESS:FILE [--part ...]
   write-flash-size-and-partition --port PORT
       --bootloader-offset HEX|INT --bootloader PATH
       --partition-offset HEX|INT --partition PATH
@@ -49,6 +52,32 @@ def main(argv: list[str] | None = None) -> int:
     write.add_argument("--address", required=True)
     write.add_argument("--file", required=True)
 
+
+    select_device = sub.add_parser(
+        "select-device", help="Resolve a port and return its device record"
+    )
+    select_device.add_argument("--port", default="auto")
+
+    image = sub.add_parser(
+        "write-flash-image", help="Flash a firmware .img at an offset"
+    )
+    image.add_argument("--port", required=True)
+    image.add_argument("--baud", type=int, default=921600)
+    image.add_argument("--address", required=True)
+    image.add_argument("--file", required=True)
+
+    parts = sub.add_parser(
+        "write-flash-parts", help="Flash multiple address:file pairs"
+    )
+    parts.add_argument("--port", required=True)
+    parts.add_argument("--baud", type=int, default=921600)
+    parts.add_argument(
+        "--part",
+        action="append",
+        required=True,
+        help="ADDRESS:FILE, may be repeated",
+    )
+
     expand_write = sub.add_parser(
         "write-flash-size-and-partition",
         help="Update bootloader flash size and rewrite the partition table",
@@ -85,6 +114,23 @@ def main(argv: list[str] | None = None) -> int:
                 parse_int(args.address),
                 Path(args.file).read_bytes(),
             )
+            return emit({"ok": True})
+        if args.command == "select-device":
+            return emit(select_device_record(args.port))
+        if args.command == "write-flash-image":
+            write_flash_image(
+                resolve_esp_port(args.port),
+                args.baud,
+                parse_int(args.address),
+                Path(args.file),
+            )
+            return emit({"ok": True})
+        if args.command == "write-flash-parts":
+            parsed_parts = []
+            for part in args.part:
+                address_s, file_s = part.split(":", 1)
+                parsed_parts.append((parse_int(address_s), Path(file_s)))
+            write_flash_parts(resolve_esp_port(args.port), args.baud, parsed_parts)
             return emit({"ok": True})
         if args.command == "write-flash-size-and-partition":
             write_flash_size_and_partition(
@@ -281,6 +327,77 @@ def write_flash_data(port: str, address: int, data: bytes) -> None:
             write_flash(esp, [(address, data)], flash_size="keep")
         finally:
             reset_chip(esp, "hard-reset")
+
+
+def select_device_record(port: str) -> dict:
+    resolved = resolve_esp_port(port)
+    for device in connected_devices():
+        if device["port"] == resolved:
+            return device
+    # Port was explicit but probing failed earlier; return a minimal record.
+    return {
+        "port": resolved,
+        "chip_family_name": "unknown",
+        "mac_address": "unknown",
+        "usb_mode": "unknown",
+        "atomvm_installed": False,
+        "build_info": [],
+        "features": [],
+    }
+
+
+def write_flash_image(port: str, baud: int, address: int, image: Path) -> None:
+    import esptool
+
+    if not image.is_file():
+        raise LookupError(f"Firmware image not found: {image}")
+    command = [
+        "--chip",
+        "auto",
+        "--port",
+        port,
+        "--baud",
+        str(baud),
+        "write-flash",
+        f"0x{address:x}",
+        str(image),
+    ]
+    try:
+        esptool.main(command)
+    except SystemExit as exit_error:
+        code = int(str(exit_error) or "0")
+        if code != 0:
+            raise RuntimeError(
+                f"write-flash-image failed with exit code {code}"
+            ) from exit_error
+
+
+def write_flash_parts(
+    port: str, baud: int, parts: list[tuple[int, Path]]
+) -> None:
+    import esptool
+
+    command = [
+        "--chip",
+        "auto",
+        "--port",
+        port,
+        "--baud",
+        str(baud),
+        "write-flash",
+    ]
+    for address, path in parts:
+        if not path.is_file():
+            raise LookupError(f"Firmware part not found: {path}")
+        command.extend([f"0x{address:x}", str(path)])
+    try:
+        esptool.main(command)
+    except SystemExit as exit_error:
+        code = int(str(exit_error) or "0")
+        if code != 0:
+            raise RuntimeError(
+                f"write-flash-parts failed with exit code {code}"
+            ) from exit_error
 
 
 def write_flash_size_and_partition(

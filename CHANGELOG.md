@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added `install` to download/install/update AtomVM on ESP32 boards.
 - Added Gleam firmware_fetch for AtomVM GitHub list/download/cache.
 - Added ESP32 firmware bundle verify/update helpers (FLASH.txt, bootloader checks).
 - Added ESP32 firmware image naming/classify helpers for AtomVM install.

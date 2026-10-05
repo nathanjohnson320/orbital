@@ -14,6 +14,7 @@ import gleam_community/ansi
 import orbital/internal/cli
 import orbital/internal/esp32
 import orbital/internal/image_header
+import orbital/internal/install
 import orbital/internal/executable.{type ExecutablePath}
 import orbital/internal/partition
 import orbital/internal/project.{
@@ -69,6 +70,31 @@ pub fn main() -> Nil {
 
     Ok(cli.Expand(help: True, ..)) -> print_document(cli.expand_help_text(True))
     Ok(cli.Expand(port:, help: False)) -> expand(port)
+
+    Ok(cli.Install(help: True, ..)) -> print_document(cli.install_help_text(True))
+    Ok(cli.Install(
+      image:,
+      version:,
+      repo:,
+      update:,
+      download_only:,
+      list_images:,
+      chip:,
+      baud:,
+      port:,
+      help: False,
+    )) ->
+      run_install(install.Options(
+        image:,
+        version:,
+        repo:,
+        update:,
+        download_only:,
+        list_images:,
+        chip:,
+        baud: option.unwrap(baud, default_baud),
+        port:,
+      ))
 
     Ok(cli.EraseFlash(help: True, ..)) ->
       print_document(cli.erase_flash_help_text(True))
@@ -178,6 +204,21 @@ fn info() -> Nil {
     Ok(devices) -> io.println(esp32.format_info_report(devices))
     Error(error) -> {
       io.println(error_to_string(Esp32HelperError(error)))
+      exit(1)
+    }
+  }
+}
+
+fn run_install(options: install.Options) -> Nil {
+  case install.run(options) {
+    Ok(Nil) -> Nil
+    Error(install.Cancelled) -> exit(0)
+    Error(error) -> {
+      let message = install.error_message(error)
+      case message {
+        "" -> Nil
+        _ -> io.println(error_heading("install failed") <> "\n" <> message)
+      }
       exit(1)
     }
   }

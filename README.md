@@ -33,6 +33,7 @@ run:
 
 ```sh
 gleam run -m orbital flash esp32
+gleam run -m orbital install
 gleam run -m orbital info
 gleam run -m orbital expand
 gleam run -m orbital monitor
