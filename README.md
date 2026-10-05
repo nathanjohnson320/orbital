@@ -34,6 +34,7 @@ run:
 ```sh
 gleam run -m orbital flash esp32
 gleam run -m orbital info
+gleam run -m orbital expand
 gleam run -m orbital monitor
 gleam run -m orbital erase-flash
 ```
@@ -42,6 +43,8 @@ gleam run -m orbital erase-flash
 `main.avm` address. Pass `--offset 0x2b8000` to choose an address yourself.
 Esptool auto-detects the serial port; pass `--port /dev/some_device` when more
 than one board is connected.
+
+`expand` grows the final `main.avm` partition to the end of detected flash.
 
 `info` lists connected ESP32 boards and whether AtomVM is already installed.
 

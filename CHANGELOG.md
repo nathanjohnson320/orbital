@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added an `expand` command that grows the final `main.avm` partition to the end
+  of detected ESP32 flash and updates the bootloader flash-size header.
 - Orbital now has an `info` command to list connected ESP32 boards and AtomVM
   install status.
 - Orbital now has an `erase-flash` command to wipe an ESP32 board's flash.
@@ -9,7 +11,7 @@
   ESP32 image-header flash-size helpers for upcoming expand support.
 - Added shared ESP32 device helpers (`orbital/internal/esp32`) backed by
   `priv/esp32.py` for listing devices, selecting a port, erasing flash, and
-  reading/writing flash regions. Follow-up PRs will wire `expand` and `install` commands.
+  reading/writing flash regions. Follow-up PRs will wire the `install` command.
 
 - ESP32 flash reads the device partition table and writes the application at
   the `main.avm` address. `--offset` selects a different address.

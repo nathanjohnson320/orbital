@@ -10,7 +10,8 @@
     esp32_select_port/1,
     esp32_erase_flash/1,
     esp32_read_flash/5,
-    esp32_write_flash_data/3
+    esp32_write_flash_data/3,
+    esp32_write_flash_size_and_partition/6
 ]).
 
 packbeam_create(OutputPath, StartModule, Files) ->
@@ -135,6 +136,27 @@ esp32_write_flash_data(Port, Address, FilePath) ->
         <<"--port">>, Port,
         <<"--address">>, integer_to_binary(Address),
         <<"--file">>, FilePath
+    ]) of
+        {ok, _Stdout} -> {ok, nil};
+        {error, Reason} -> {error, Reason}
+    end.
+
+esp32_write_flash_size_and_partition(
+    Port,
+    BootloaderOffset,
+    BootloaderPath,
+    PartitionOffset,
+    PartitionPath,
+    FlashSizeName
+) ->
+    case run_esp32_collect([
+        <<"write-flash-size-and-partition">>,
+        <<"--port">>, Port,
+        <<"--bootloader-offset">>, integer_to_binary(BootloaderOffset),
+        <<"--bootloader">>, BootloaderPath,
+        <<"--partition-offset">>, integer_to_binary(PartitionOffset),
+        <<"--partition">>, PartitionPath,
+        <<"--flash-size-name">>, FlashSizeName
     ]) of
         {ok, _Stdout} -> {ok, nil};
         {error, Reason} -> {error, Reason}

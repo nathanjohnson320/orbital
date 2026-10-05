@@ -117,6 +117,29 @@ pub fn write_flash_data(
   |> map_ffi_error
 }
 
+/// Update the bootloader flash-size header and rewrite the partition table.
+///
+/// Uses esptool's image-header rewriter so flash mode/frequency stay `keep`
+/// while the size matches `flash_size_name` (e.g. `"16MB"`).
+pub fn write_flash_size_and_partition(
+  port port: String,
+  bootloader_offset bootloader_offset: Int,
+  bootloader_path bootloader_path: String,
+  partition_offset partition_offset: Int,
+  partition_path partition_path: String,
+  flash_size_name flash_size_name: String,
+) -> Result(Nil, Error) {
+  write_flash_size_and_partition_ffi(
+    port,
+    bootloader_offset,
+    bootloader_path,
+    partition_offset,
+    partition_path,
+    flash_size_name,
+  )
+  |> map_ffi_error
+}
+
 /// Read a flash region into memory via a temporary file.
 pub fn read_flash_bytes(
   port port: String,
@@ -186,7 +209,7 @@ pub fn format_device(device: Device) -> String {
   <> device.port
 }
 
-/// Full `info` report for zero or more connected devices.
+/// Prefer an explicit port, otherwise `"auto"`.
 pub fn format_info_report(devices: List(Device)) -> String {
   case devices {
     [] ->
@@ -381,4 +404,14 @@ fn write_flash_data_ffi(
   port: String,
   address: Int,
   file_path: String,
+) -> Result(Nil, String)
+
+@external(erlang, "orbital_ffi", "esp32_write_flash_size_and_partition")
+fn write_flash_size_and_partition_ffi(
+  port: String,
+  bootloader_offset: Int,
+  bootloader_path: String,
+  partition_offset: Int,
+  partition_path: String,
+  flash_size_name: String,
 ) -> Result(Nil, String)

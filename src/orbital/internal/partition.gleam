@@ -17,6 +17,8 @@ const entry_size = 32
 
 const data_partition_type = 0x01
 
+const table_offset = 0x8000
+
 const table_size = 0xC00
 
 /// A parsed ESP-IDF partition entry.
@@ -426,6 +428,11 @@ fn hex_digits(value: Int) -> String {
     0 -> digit
     _ -> hex_digits(rest) <> digit
   }
+}
+
+/// Flash offset of the ESP-IDF partition table used by AtomVM layouts.
+pub fn expected_table_offset() -> Int {
+  table_offset
 }
 
 /// Expected on-device partition table size used by AtomVM layouts.
