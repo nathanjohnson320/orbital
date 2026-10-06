@@ -4,6 +4,7 @@
     packbeam_create/3,
     packbeam_list/1,
     run_executable/3,
+    run_streaming_executable/3,
     find_executable/1,
     run_named_executable/2,
     monitor/4,
@@ -79,6 +80,40 @@ run_executable(Name, Directory, Arguments) ->
         {ok, ExitStatus}
     catch
         error:_ -> {error, nil}
+    end.
+
+%% Like run_executable/3, but streams stdout/stderr to the console as it arrives
+%% (used for `orbital flash wasm` under Node).
+-spec run_streaming_executable(
+    Name :: binary(),
+    Directory :: binary(),
+    Arguments :: list(binary())
+) -> {ok, integer()} | {error, nil}.
+run_streaming_executable(Name, Directory, Arguments) ->
+    try
+        StringName = unsafe_characters_to_list(Name),
+        Port = erlang:open_port({spawn_executable, StringName},
+            [
+                {args, [to_charlist(Arg) || Arg <- Arguments]},
+                {cd, unsafe_characters_to_list(Directory)},
+                binary,
+                exit_status,
+                stderr_to_stdout,
+                use_stdio
+            ]
+        ),
+        streaming_loop(Port)
+    catch
+        error:_ -> {error, nil}
+    end.
+
+streaming_loop(Port) ->
+    receive
+        {Port, {data, Data}} ->
+            io:put_chars(Data),
+            streaming_loop(Port);
+        {Port, {exit_status, Code}} ->
+            {ok, Code}
     end.
 
 -spec find_executable(Name :: binary()) -> {ok, binary()} | {error, nil}.

@@ -22,6 +22,8 @@ import orbital/internal/pico_install
 import orbital/internal/project.{
   type Project, CannotParseGleamToml, CannotReadGleamToml, CannotReadProjectName,
 }
+import orbital/internal/wasm
+import orbital/internal/wasm_install
 import simplifile.{Enoent}
 import temporary
 import term_size
@@ -124,6 +126,28 @@ pub fn main() -> Nil {
         picotool:,
       ))
 
+    Ok(cli.InstallWasm(help: True, ..)) ->
+      print_document(cli.install_help_text(True))
+    Ok(cli.InstallWasm(
+      env:,
+      image:,
+      version:,
+      repo:,
+      download_only:,
+      list_images:,
+      with_atomvmlib:,
+      help: False,
+    )) ->
+      run_wasm_install(wasm_install.Options(
+        env:,
+        image:,
+        version:,
+        repo:,
+        download_only:,
+        list_images:,
+        with_atomvmlib:,
+      ))
+
     Ok(cli.Expand(help: True, ..)) -> print_document(cli.expand_help_text(True))
     Ok(cli.Expand(port:, help: False)) -> expand(port)
 
@@ -159,6 +183,17 @@ fn flash(platform: cli.FlashPlatform) -> Nil {
         family_id:,
       ))
       Ok(True)
+    }
+    cli.Wasm(env:, image:, version:, repo:, output_dir:, atomvmlib:) -> {
+      use outcome <- result.try(do_flash_wasm(
+        env:,
+        image:,
+        version:,
+        repo:,
+        output_dir:,
+        atomvmlib:,
+      ))
+      Ok(outcome)
     }
   }
 
@@ -231,6 +266,20 @@ fn run_pico_install(options: pico_install.Options) -> Nil {
     Error(pico_install.Cancelled) -> exit(0)
     Error(error) -> {
       let message = pico_install.error_message(error)
+      case message {
+        "" -> Nil
+        _ -> io.println(error_heading("install failed") <> "\n" <> message)
+      }
+      exit(1)
+    }
+  }
+}
+
+fn run_wasm_install(options: wasm_install.Options) -> Nil {
+  case wasm_install.run(options) {
+    Ok(Nil) -> Nil
+    Error(error) -> {
+      let message = wasm_install.error_message(error)
       case message {
         "" -> Nil
         _ -> io.println(error_heading("install failed") <> "\n" <> message)
@@ -617,6 +666,45 @@ fn do_flash_pico(
   }
 }
 
+/// Returns `True` when a device-like run completed (Node), `False` after a
+/// browser export (no physical flash).
+fn do_flash_wasm(
+  env env: Option(String),
+  image image: Option(String),
+  version version: Option(String),
+  repo repo: Option(String),
+  output_dir output_dir: Option(String),
+  atomvmlib atomvmlib: Option(String),
+) -> Result(Bool, Error) {
+  let outcome = {
+    use directory <- temporary.create(temporary.directory())
+    let avm_path = filepath.join(directory, "build.avm")
+    use avm_path <- result.try(do_build(Some(avm_path)))
+    use Nil <- try_step("Deploying to AtomVM WASM...", fn() {
+      wasm.flash(
+        avm_path,
+        wasm.FlashOptions(
+          env:,
+          image:,
+          version:,
+          repo:,
+          output_dir:,
+          atomvmlib:,
+        ),
+      )
+      |> result.map_error(WasmError)
+    })
+    // Success text is printed by the WASM deployer (Node run / web export).
+    Ok(False)
+  }
+
+  case outcome {
+    Ok(result) -> result
+    Error(_) ->
+      Error(WasmError(wasm.FileError("could not create a temporary directory")))
+  }
+}
+
 fn do_uf2create(
   output_file: Option(String),
   app_start: Option(String),
@@ -739,6 +827,7 @@ type Error {
 
   CannotFlashWithEsptool(esptool_status_code: Int)
   PicoError(reason: pico.Error)
+  WasmError(reason: wasm.Error)
   EsptoolCannotOpenPort(port: String)
   CannotReadPartitionTable
   CannotFindMainPartition
@@ -760,6 +849,7 @@ fn error_to_string(error: Error) -> String {
     CannotFlashWithEsptool(_)
     | EsptoolCannotOpenPort(_)
     | PicoError(_)
+    | WasmError(_)
     | CannotReadPartitionTable
     | CannotFindMainPartition -> "cannot flash device"
     Esp32HelperError(esp32.ToolingMissing(_)) -> "missing ESP32 tooling"
@@ -822,6 +912,8 @@ fn error_to_string(error: Error) -> String {
       <> "."
 
     PicoError(reason:) -> pico.error_message(reason)
+
+    WasmError(reason:) -> wasm.error_message(reason)
 
     EsptoolCannotOpenPort(port:) ->
       "The port '"

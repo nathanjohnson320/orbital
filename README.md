@@ -93,6 +93,26 @@ gleam run -m orbital uf2create
 gleam run -m orbital flash pico --pico-path /Volumes/RPI-RP2 --family-id data
 ```
 
+### WebAssembly (Emscripten)
+
+AtomVM ships separate Node.js and browser WASM builds. ExAtomVM does not wrap
+them; Orbital downloads the release assets and either runs your `.avm` under
+Node or writes a small browser bundle.
+
+```sh
+gleam run -m orbital install wasm --list-images
+gleam run -m orbital install wasm --env node
+gleam run -m orbital flash wasm
+gleam run -m orbital flash wasm --env web --output-dir ./wasm_out
+```
+
+`install wasm` caches `AtomVM.js` / `AtomVM.wasm` under
+`firmware_images/AtomVM-{node,web}-<version>/` (and `atomvmlib` by default).
+`flash wasm` builds your project, then runs `node AtomVM.js app.avm
+atomvmlib.avm`. With `--env web` it copies the runtime, AVM, and an
+`index.html` into `--output-dir` (default `wasm_out`). Serve that directory
+over localhost or HTTPS with COOP/COEP headers so SharedArrayBuffer works.
+
 And you're good to go! To get an overview of all the available commands and
 options you can run:
 

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Added WASM / Emscripten support (beyond ExAtomVM, which has no WASM tasks).
+  AtomVM publishes separate Node and browser builds; Orbital downloads them
+  into `firmware_images/AtomVM-{node,web}-<version>/` as `AtomVM.js` +
+  `AtomVM.wasm` (the loader always looks for that wasm name).
+  - `install wasm` (`--env node|web|all`, `--version`, `--list-images`,
+    `--image`, `--repo`, `--no-atomvmlib`) caches runtimes and optionally
+    `atomvmlib`.
+  - `flash wasm` builds the project AVM and either runs it with Node
+    (`node AtomVM.js app.avm atomvmlib.avm`, default `--env node`) or writes a
+    browser bundle (`--env web`, `--output-dir`, default `wasm_out`) with
+    `index.html`. Browser hosts still need COOP/COEP headers for
+    SharedArrayBuffer.
 - Pico `install pico` downloads AtomVM UF2s (prefers `-combined`), caches under
   `firmware_images/`, and loads with `picotool` (`load -f`) falling back to
   UF2 volume copy. Flags: `--board`, `--image`, `--version`, `--repo`,

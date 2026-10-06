@@ -1,7 +1,8 @@
 import gleam/option.{None, Some}
 import gleeunit
 import orbital/internal/cli.{
-  EraseFlash, Esp32, Expand, Flash, Info, Monitor, Pico, Uf2create,
+  EraseFlash, Esp32, Expand, Flash, Info, InstallWasm, Monitor, Pico, Uf2create,
+  Wasm,
 }
 
 pub fn main() -> Nil {
@@ -181,4 +182,104 @@ pub fn uf2create_flags_test() {
 
 pub fn uf2create_help_test() {
   let assert Ok(Uf2create(help: True, ..)) = cli.parse(["uf2create", "--help"])
+}
+
+pub fn wasm_flash_defaults_test() {
+  let assert Ok(Flash(platform:, help: False)) = cli.parse(["flash", "wasm"])
+
+  let assert Wasm(env:, image:, version:, repo:, output_dir:, atomvmlib:) =
+    platform
+  assert env == None
+  assert image == None
+  assert version == None
+  assert repo == None
+  assert output_dir == None
+  assert atomvmlib == None
+}
+
+pub fn wasm_flash_flags_test() {
+  let assert Ok(Flash(
+    platform: Wasm(env:, image:, version:, repo:, output_dir:, atomvmlib:),
+    help: False,
+  )) =
+    cli.parse([
+      "flash",
+      "wasm",
+      "--env",
+      "web",
+      "--version",
+      "v0.6.6",
+      "--repo",
+      "acme/builds",
+      "--output-dir",
+      "./dist",
+      "--atomvmlib",
+      "./atomvmlib.avm",
+    ])
+
+  assert env == Some("web")
+  assert image == None
+  assert version == Some("v0.6.6")
+  assert repo == Some("acme/builds")
+  assert output_dir == Some("./dist")
+  assert atomvmlib == Some("./atomvmlib.avm")
+}
+
+pub fn install_wasm_defaults_test() {
+  let assert Ok(InstallWasm(
+    env:,
+    image:,
+    version:,
+    repo:,
+    download_only: False,
+    list_images: False,
+    with_atomvmlib: True,
+    help: False,
+  )) = cli.parse(["install", "wasm"])
+
+  assert env == None
+  assert image == None
+  assert version == None
+  assert repo == None
+}
+
+pub fn install_wasm_flags_test() {
+  let assert Ok(InstallWasm(
+    env:,
+    version:,
+    list_images: False,
+    with_atomvmlib: False,
+    help: False,
+    ..,
+  )) =
+    cli.parse([
+      "install",
+      "wasm",
+      "--env",
+      "node",
+      "--version",
+      "v0.6.6",
+      "--no-atomvmlib",
+    ])
+
+  assert env == Some("node")
+  assert version == Some("v0.6.6")
+}
+
+pub fn install_wasm_list_images_test() {
+  let assert Ok(InstallWasm(list_images: True, env:, ..)) =
+    cli.parse(["install", "wasm", "--list-images", "--env", "web"])
+  assert env == Some("web")
+}
+
+pub fn install_wasm_rejects_image_and_version_test() {
+  let assert Error(cli.ConflictingFlags(_)) =
+    cli.parse([
+      "install",
+      "wasm",
+      "--image",
+      "AtomVM-node-v0.6.6",
+      "--version",
+      "v0.6.6",
+    ])
 }
