@@ -53,6 +53,16 @@ pub type Command {
     picotool: Option(String),
     help: Bool,
   )
+  InstallWasm(
+    env: Option(String),
+    image: Option(String),
+    version: Option(String),
+    repo: Option(String),
+    download_only: Bool,
+    list_images: Bool,
+    with_atomvmlib: Bool,
+    help: Bool,
+  )
   Expand(port: Option(String), help: Bool)
   EraseFlash(port: Option(String), help: Bool)
   Info(help: Bool)
@@ -74,6 +84,14 @@ pub type FlashPlatform {
     app_start: Option(String),
     family_id: Option(String),
   )
+  Wasm(
+    env: Option(String),
+    image: Option(String),
+    version: Option(String),
+    repo: Option(String),
+    output_dir: Option(String),
+    atomvmlib: Option(String),
+  )
 }
 
 pub type ParsingState {
@@ -81,6 +99,7 @@ pub type ParsingState {
   ParsingFlash
   ParsingFlashEsp32
   ParsingFlashPico
+  ParsingFlashWasm
   ParsingHelp
   ParsingBuild
   ParsingList
@@ -88,6 +107,7 @@ pub type ParsingState {
   ParsingMonitor
   ParsingInstall
   ParsingInstallPico
+  ParsingInstallWasm
   ParsingExpand
   ParsingEraseFlash
   ParsingInfo
@@ -183,6 +203,25 @@ pub fn parse(args: List(String)) -> Result(Command, Error) {
             help: False,
           ))
         }
+
+        False, ["wasm"] ->
+          Ok(Flash(
+            platform: Wasm(
+              env: option.from_result(find_flag_value(flags, "env")),
+              image: option.from_result(find_flag_value(flags, "image")),
+              version: option.from_result(find_flag_value(flags, "version")),
+              repo: option.from_result(find_flag_value(flags, "repo")),
+              output_dir: option.from_result(find_flag_value(
+                flags,
+                "output-dir",
+              )),
+              atomvmlib: option.from_result(find_flag_value(
+                flags,
+                "atomvmlib",
+              )),
+            ),
+            help: False,
+          ))
 
         False, ["esp32"] -> {
           use baud <- optional_int_flag(flags, ParsingFlash, "baud")
@@ -346,6 +385,46 @@ pub fn parse(args: List(String)) -> Result(Command, Error) {
         }
       }
 
+    Ok(hoist.Args(arguments: ["install", "wasm"], flags:)) ->
+      case toggled(flags, "help") {
+        True ->
+          Ok(InstallWasm(
+            env: None,
+            image: None,
+            version: None,
+            repo: None,
+            download_only: False,
+            list_images: False,
+            with_atomvmlib: True,
+            help: True,
+          ))
+        False -> {
+          let image = option.from_result(find_flag_value(flags, "image"))
+          let version = option.from_result(find_flag_value(flags, "version"))
+          let repo = option.from_result(find_flag_value(flags, "repo"))
+          let env = option.from_result(find_flag_value(flags, "env"))
+          let download_only = toggled(flags, "download-only")
+          let list_images = toggled(flags, "list-images")
+          use Nil <- result.try(validate_wasm_install_flags(
+            env:,
+            image:,
+            version:,
+            download_only:,
+            list_images:,
+          ))
+          Ok(InstallWasm(
+            env:,
+            image:,
+            version:,
+            repo:,
+            download_only:,
+            list_images:,
+            with_atomvmlib: !toggled(flags, "no-atomvmlib"),
+            help: False,
+          ))
+        }
+      }
+
     Ok(hoist.Args(arguments: ["expand"], flags:)) ->
       case toggled(flags, "help") {
         True -> Ok(Expand(port: None, help: True))
@@ -394,6 +473,7 @@ fn parse_args(
       "flash", ParsingBase -> Ok(#(ParsingFlash, base_flash_flags()))
       "esp32", ParsingFlash -> Ok(#(ParsingFlashEsp32, esp_flash_flags()))
       "pico", ParsingFlash -> Ok(#(ParsingFlashPico, pico_flash_flags()))
+      "wasm", ParsingFlash -> Ok(#(ParsingFlashWasm, wasm_flash_flags()))
 
       "list", ParsingBase -> Ok(#(ParsingList, list_flags()))
       "uf2create", ParsingBase -> Ok(#(ParsingUf2create, uf2create_flags()))
@@ -401,6 +481,7 @@ fn parse_args(
       "install", ParsingBase -> Ok(#(ParsingInstall, install_flags()))
       "esp32", ParsingInstall -> Ok(#(ParsingInstall, install_flags()))
       "pico", ParsingInstall -> Ok(#(ParsingInstallPico, pico_install_flags()))
+      "wasm", ParsingInstall -> Ok(#(ParsingInstallWasm, wasm_install_flags()))
       "expand", ParsingBase -> Ok(#(ParsingExpand, expand_flags()))
       "erase-flash", ParsingBase ->
         Ok(#(ParsingEraseFlash, erase_flash_flags()))
@@ -423,8 +504,9 @@ fn parse_args(
       // The "monitor" command accepts no subcommands
       _, ParsingMonitor -> Error(UnknownCommand(command:))
 
-      // The "install" command takes esp32/pico platforms
-      _, ParsingInstall | _, ParsingInstallPico -> Ok(#(state, flags))
+      // The "install" command takes esp32/pico/wasm platforms
+      _, ParsingInstall | _, ParsingInstallPico | _, ParsingInstallWasm ->
+        Ok(#(state, flags))
 
       // The "expand" command accepts no subcommands
       _, ParsingExpand -> Error(UnknownCommand(command:))
@@ -438,8 +520,10 @@ fn parse_args(
       // The "flash" command takes positional arguments, but no subcommands, so
       // there's no need to special case any of them as they don't change the
       // accepted flags
-      _, ParsingFlash | _, ParsingFlashEsp32 | _, ParsingFlashPico ->
-        Ok(#(state, flags))
+      _, ParsingFlash
+      | _, ParsingFlashEsp32
+      | _, ParsingFlashPico
+      | _, ParsingFlashWasm -> Ok(#(state, flags))
     }
   })
 }
@@ -529,6 +613,23 @@ fn pico_flash_flags() -> ValidatedFlagSpecs {
   pico_flash_flags
 }
 
+fn wasm_flash_flags() -> ValidatedFlagSpecs {
+  let assert Ok(wasm_flash_flags) =
+    hoist.validate_flag_specs([
+      hoist.new_flag("env"),
+      hoist.new_flag("image"),
+      hoist.new_flag("version"),
+      hoist.new_flag("repo"),
+      hoist.new_flag("output-dir")
+        |> hoist.with_short_alias("o"),
+      hoist.new_flag("atomvmlib"),
+      hoist.new_flag("help")
+        |> hoist.with_short_alias("h")
+        |> hoist.as_toggle,
+    ])
+  wasm_flash_flags
+}
+
 fn uf2create_flags() -> ValidatedFlagSpecs {
   let assert Ok(uf2create_flags) =
     hoist.validate_flag_specs([
@@ -604,6 +705,26 @@ fn pico_install_flags() -> ValidatedFlagSpecs {
         |> hoist.as_toggle,
     ])
   pico_install_flags
+}
+
+fn wasm_install_flags() -> ValidatedFlagSpecs {
+  let assert Ok(wasm_install_flags) =
+    hoist.validate_flag_specs([
+      hoist.new_flag("env"),
+      hoist.new_flag("image"),
+      hoist.new_flag("version"),
+      hoist.new_flag("repo"),
+      hoist.new_flag("download-only")
+        |> hoist.as_toggle,
+      hoist.new_flag("list-images")
+        |> hoist.as_toggle,
+      hoist.new_flag("no-atomvmlib")
+        |> hoist.as_toggle,
+      hoist.new_flag("help")
+        |> hoist.with_short_alias("h")
+        |> hoist.as_toggle,
+    ])
+  wasm_install_flags
 }
 
 fn parse_esp32_install(
@@ -759,6 +880,35 @@ fn validate_pico_install_flags(
                 "Pass --board pico|pico_w|pico2|pico2_w, or --image / --list-images",
               ))
           }
+      }
+  }
+}
+
+fn validate_wasm_install_flags(
+  env env: Option(String),
+  image image: Option(String),
+  version version: Option(String),
+  download_only download_only: Bool,
+  list_images list_images: Bool,
+) -> Result(Nil, Error) {
+  let _ = download_only
+  let _ = env
+  case list_images {
+    True ->
+      case option.is_some(image) || option.is_some(version) || download_only {
+        True ->
+          Error(ConflictingFlags(
+            "--list-images cannot be combined with --image, --version or --download-only",
+          ))
+        False -> Ok(Nil)
+      }
+    False ->
+      case option.is_some(image) && option.is_some(version) {
+        True ->
+          Error(ConflictingFlags(
+            "--image and --version cannot be used together",
+          ))
+        False -> Ok(Nil)
       }
   }
 }
@@ -973,7 +1123,7 @@ pub fn usage_text() -> Document {
     doc.line,
     command_line("  monitor      ", "show the console of an ESP32 board"),
     doc.line,
-    command_line("  install      ", "install AtomVM on ESP32 or Pico"),
+    command_line("  install      ", "install AtomVM on ESP32, Pico, or WASM"),
     doc.line,
     command_line("  expand       ", "grow main.avm to the end of ESP32 flash"),
     doc.line,
@@ -1056,6 +1206,43 @@ pub fn flash_help_text(description: Bool) -> Document {
       "    --family-id    <ID>     ",
       "UF2 family (universal targets Pico and Pico 2)",
       "universal",
+    ),
+    doc.lines(2),
+    command_line(
+      "  wasm   ",
+      "run under Node.js or export a browser WASM bundle",
+    ),
+    doc.line,
+    flag_line_with_default(
+      "    --env          <ENV>   ",
+      "node runs the AVM; web writes a browser bundle",
+      "node",
+    ),
+    doc.line,
+    flag_line(
+      "    --image        <PATH|NAME> ",
+      "cached runtime directory or published AtomVM-node/web name",
+    ),
+    doc.line,
+    flag_line(
+      "    --version      <TAG>    ",
+      "AtomVM release tag for the WASM runtime",
+    ),
+    doc.line,
+    flag_line(
+      "    --repo         <OWNER/REPO> ",
+      "extra GitHub repository of custom builds",
+    ),
+    doc.line,
+    flag_line_with_default(
+      "    -o, --output-dir <PATH> ",
+      "directory for --env web browser files",
+      "wasm_out",
+    ),
+    doc.line,
+    flag_line(
+      "    --atomvmlib    <PATH>  ",
+      "optional atomvmlib.avm (downloaded to match --version when omitted)",
     ),
     doc.lines(2),
     doc.from_string(ansi.magenta("Other flags:")),
@@ -1339,6 +1526,47 @@ pub fn install_help_text(description: Bool) -> Document {
       "picotool executable for force-load",
     ),
     doc.lines(2),
+    command_line(
+      "  wasm   ",
+      "download AtomVM Node.js / browser WASM runtimes",
+    ),
+    doc.line,
+    flag_line_with_default(
+      "    --env             <ENV>        ",
+      "node, web, or all",
+      "all",
+    ),
+    doc.line,
+    flag_line(
+      "    --image           <PATH|NAME>  ",
+      "cached runtime directory or published AtomVM-node/web name",
+    ),
+    doc.line,
+    flag_line(
+      "    --version         <TAG>        ",
+      "AtomVM release tag to download",
+    ),
+    doc.line,
+    flag_line(
+      "    --repo            <OWNER/REPO> ",
+      "extra GitHub repository of custom builds",
+    ),
+    doc.line,
+    flag_line(
+      "    --download-only                ",
+      "same as install for WASM (runtimes are only cached)",
+    ),
+    doc.line,
+    flag_line(
+      "    --list-images                  ",
+      "list Node/web WASM runtimes",
+    ),
+    doc.line,
+    flag_line(
+      "    --no-atomvmlib                 ",
+      "skip downloading atomvmlib-*.avm",
+    ),
+    doc.lines(2),
     doc.from_string(ansi.magenta("Other flags:")),
     doc.line,
     flag_line("  -h, --help                       ", "show this help text"),
@@ -1432,14 +1660,15 @@ pub fn info_help_text(description: Bool) -> Document {
 pub fn help_text_for_state(state: ParsingState) -> Document {
   case state {
     ParsingBase -> usage_text()
-    ParsingFlash | ParsingFlashEsp32 | ParsingFlashPico ->
+    ParsingFlash | ParsingFlashEsp32 | ParsingFlashPico | ParsingFlashWasm ->
       flash_help_text(False)
     ParsingHelp -> usage_text()
     ParsingBuild -> build_help_text(False)
     ParsingList -> list_help_text(False)
     ParsingUf2create -> uf2create_help_text(False)
     ParsingMonitor -> monitor_help_text(False)
-    ParsingInstall | ParsingInstallPico -> install_help_text(False)
+    ParsingInstall | ParsingInstallPico | ParsingInstallWasm ->
+      install_help_text(False)
     ParsingExpand -> expand_help_text(False)
     ParsingEraseFlash -> erase_flash_help_text(False)
     ParsingInfo -> info_help_text(False)
