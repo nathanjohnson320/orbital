@@ -179,19 +179,25 @@ fn export_web(
   io.println(
     "and Cross-Origin-Embedder-Policy: require-corp (AtomVM needs SharedArrayBuffer).",
   )
+  io.println(
+    "Example: npx http-server -H \"Cross-Origin-Opener-Policy: same-origin\" -H \"Cross-Origin-Embedder-Policy: require-corp\"",
+  )
   Ok(Nil)
 }
 
 fn web_index_html(avm_name: String, lib_path: Option(String)) -> String {
-  let arguments = case lib_path {
-    Some(lib) ->
-      "[\"./"
-      <> avm_name
-      <> "\", \"./"
-      <> filepath.base_name(lib)
-      <> "\"]"
-    None -> "[\"./" <> avm_name <> "\"]"
+  // Absolute paths: AtomVM resolves Module.arguments via open() then FetchAPI.
+  // Preload into MEMFS first — the sync FetchAPI fallback is unreliable under
+  // PROXY_TO_PTHREAD (main runs on a worker), so without this the runtime
+  // starts but never loads the AVM and prints nothing.
+  let paths = case lib_path {
+    Some(lib) -> ["/" <> avm_name, "/" <> filepath.base_name(lib)]
+    None -> ["/" <> avm_name]
   }
+  let arguments =
+    "[" <> string.join(list.map(paths, fn(p) { "\"" <> p <> "\"" }), ", ") <> "]"
+  let paths_js =
+    "[" <> string.join(list.map(paths, fn(p) { "\"" <> p <> "\"" }), ", ") <> "]"
   "<!doctype html>
 <html lang=\"en\">
   <head>
@@ -200,12 +206,49 @@ fn web_index_html(avm_name: String, lib_path: Option(String)) -> String {
   </head>
   <body>
     <h1>AtomVM</h1>
-    <p>Check the browser console for application output.</p>
+    <p>Application output appears below and in the browser console.</p>
+    <pre id=\"out\" style=\"white-space:pre-wrap;font:14px/1.4 ui-monospace,monospace\"></pre>
     <script>
+      function logLine(text, isErr) {
+        var el = document.getElementById(\"out\");
+        el.textContent += text + \"\\n\";
+        (isErr ? console.error : console.log)(text);
+      }
+      async function preload(path) {
+        var res = await fetch(path);
+        if (!res.ok) throw new Error(\"fetch \" + path + \" -> \" + res.status);
+        var data = new Uint8Array(await res.arrayBuffer());
+        var parts = path.split(\"/\").filter(Boolean);
+        var name = parts.pop();
+        var dir = \"/\";
+        for (var i = 0; i < parts.length; i++) {
+          dir = dir === \"/\" ? \"/\" + parts[i] : dir + \"/\" + parts[i];
+          try { FS.mkdir(dir); } catch (e) {}
+        }
+        FS.writeFile(path, data);
+        logLine(\"preloaded \" + path + \" (\" + data.length + \" bytes)\");
+      }
       var Module = {
         arguments: "
   <> arguments
   <> ",
+        print: function (t) { logLine(t, false); },
+        printErr: function (t) { logLine(t, true); },
+        onAbort: function (w) { logLine(\"abort: \" + w, true); },
+        onExit: function (c) { logLine(\"exit: \" + c, false); },
+        preRun: [
+          function () {
+            addRunDependency(\"atomvm-avm\");
+            Promise.all("
+  <> paths_js
+  <> ".map(preload))
+              .then(function () { removeRunDependency(\"atomvm-avm\"); })
+              .catch(function (e) {
+                logLine(String((e && e.stack) || e), true);
+                removeRunDependency(\"atomvm-avm\");
+              });
+          },
+        ],
       };
     </script>
     <script src=\"./AtomVM.js\"></script>
