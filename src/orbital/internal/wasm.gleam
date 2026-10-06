@@ -162,42 +162,45 @@ fn export_web(
   use Nil <- result.try(copy_file(avm_path, filepath.join(output_dir, avm_name)))
   use Nil <- result.try(case lib_path {
     None -> Ok(Nil)
-    Some(lib) -> copy_file(lib, filepath.join(output_dir, filepath.base_name(lib)))
+    Some(lib) ->
+      copy_file(lib, filepath.join(output_dir, filepath.base_name(lib)))
   })
   let html = web_index_html(avm_name, lib_path)
   use Nil <- result.try(
-    simplifile.write(to: filepath.join(output_dir, "index.html"), contents: html)
+    simplifile.write(
+      to: filepath.join(output_dir, "index.html"),
+      contents: html,
+    )
     |> result.map_error(fn(_) {
       FileError("Could not write " <> filepath.join(output_dir, "index.html"))
     }),
   )
   io.println("")
-  io.println(ansi.magenta("⚛️  wrote AtomVM WASM browser bundle to " <> output_dir <> "/"))
+  io.println(ansi.magenta(
+    "⚛️  wrote AtomVM WASM browser bundle to " <> output_dir <> "/",
+  ))
   io.println(
     "Serve it over localhost/HTTPS with Cross-Origin-Opener-Policy: same-origin",
   )
   io.println(
     "and Cross-Origin-Embedder-Policy: require-corp (AtomVM needs SharedArrayBuffer).",
   )
-  io.println(
-    "Example: npx http-server -H \"Cross-Origin-Opener-Policy: same-origin\" -H \"Cross-Origin-Embedder-Policy: require-corp\"",
-  )
   Ok(Nil)
 }
 
 fn web_index_html(avm_name: String, lib_path: Option(String)) -> String {
-  // Absolute paths: AtomVM resolves Module.arguments via open() then FetchAPI.
-  // Preload into MEMFS first — the sync FetchAPI fallback is unreliable under
-  // PROXY_TO_PTHREAD (main runs on a worker), so without this the runtime
-  // starts but never loads the AVM and prints nothing.
   let paths = case lib_path {
     Some(lib) -> ["/" <> avm_name, "/" <> filepath.base_name(lib)]
     None -> ["/" <> avm_name]
   }
   let arguments =
-    "[" <> string.join(list.map(paths, fn(p) { "\"" <> p <> "\"" }), ", ") <> "]"
+    "["
+    <> string.join(list.map(paths, fn(p) { "\"" <> p <> "\"" }), ", ")
+    <> "]"
   let paths_js =
-    "[" <> string.join(list.map(paths, fn(p) { "\"" <> p <> "\"" }), ", ") <> "]"
+    "["
+    <> string.join(list.map(paths, fn(p) { "\"" <> p <> "\"" }), ", ")
+    <> "]"
   "<!doctype html>
 <html lang=\"en\">
   <head>
@@ -205,46 +208,29 @@ fn web_index_html(avm_name: String, lib_path: Option(String)) -> String {
     <title>AtomVM WASM</title>
   </head>
   <body>
-    <h1>AtomVM</h1>
-    <p>Application output appears below and in the browser console.</p>
-    <pre id=\"out\" style=\"white-space:pre-wrap;font:14px/1.4 ui-monospace,monospace\"></pre>
     <script>
-      function logLine(text, isErr) {
-        var el = document.getElementById(\"out\");
-        el.textContent += text + \"\\n\";
-        (isErr ? console.error : console.log)(text);
-      }
       async function preload(path) {
         var res = await fetch(path);
         if (!res.ok) throw new Error(\"fetch \" + path + \" -> \" + res.status);
         var data = new Uint8Array(await res.arrayBuffer());
         var parts = path.split(\"/\").filter(Boolean);
-        var name = parts.pop();
+        parts.pop();
         var dir = \"/\";
         for (var i = 0; i < parts.length; i++) {
           dir = dir === \"/\" ? \"/\" + parts[i] : dir + \"/\" + parts[i];
           try { FS.mkdir(dir); } catch (e) {}
         }
         FS.writeFile(path, data);
-        logLine(\"preloaded \" + path + \" (\" + data.length + \" bytes)\");
       }
       var Module = {
-        arguments: "
-  <> arguments
-  <> ",
-        print: function (t) { logLine(t, false); },
-        printErr: function (t) { logLine(t, true); },
-        onAbort: function (w) { logLine(\"abort: \" + w, true); },
-        onExit: function (c) { logLine(\"exit: \" + c, false); },
+        arguments: " <> arguments <> ",
         preRun: [
           function () {
             addRunDependency(\"atomvm-avm\");
-            Promise.all("
-  <> paths_js
-  <> ".map(preload))
+            Promise.all(" <> paths_js <> ".map(preload))
               .then(function () { removeRunDependency(\"atomvm-avm\"); })
               .catch(function (e) {
-                logLine(String((e && e.stack) || e), true);
+                console.error(e);
                 removeRunDependency(\"atomvm-avm\");
               });
           },

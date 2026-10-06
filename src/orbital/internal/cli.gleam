@@ -215,10 +215,7 @@ pub fn parse(args: List(String)) -> Result(Command, Error) {
                 flags,
                 "output-dir",
               )),
-              atomvmlib: option.from_result(find_flag_value(
-                flags,
-                "atomvmlib",
-              )),
+              atomvmlib: option.from_result(find_flag_value(flags, "atomvmlib")),
             ),
             help: False,
           ))
@@ -523,7 +520,8 @@ fn parse_args(
       _, ParsingFlash
       | _, ParsingFlashEsp32
       | _, ParsingFlashPico
-      | _, ParsingFlashWasm -> Ok(#(state, flags))
+      | _, ParsingFlashWasm
+      -> Ok(#(state, flags))
     }
   })
 }
@@ -1526,10 +1524,7 @@ pub fn install_help_text(description: Bool) -> Document {
       "picotool executable for force-load",
     ),
     doc.lines(2),
-    command_line(
-      "  wasm   ",
-      "download AtomVM Node.js / browser WASM runtimes",
-    ),
+    command_line("  wasm   ", "download AtomVM Node.js / browser WASM runtimes"),
     doc.line,
     flag_line_with_default(
       "    --env             <ENV>        ",

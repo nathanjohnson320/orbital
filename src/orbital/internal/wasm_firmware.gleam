@@ -91,8 +91,7 @@ pub fn error_message(error: Error) -> String {
   case error {
     UnknownEnv(value) ->
       "Unknown WASM env '" <> value <> "'. Use node, web, or all."
-    EnvRequired ->
-      "Pass --env node|web|all (or --image / --list-images)."
+    EnvRequired -> "Pass --env node|web|all (or --image / --list-images)."
     NoRuntime(env:, tag:) ->
       "No AtomVM " <> env <> " WASM runtime in release " <> tag <> "."
     UnknownRuntime(name) -> "Unknown WASM runtime '" <> name <> "'."
@@ -194,11 +193,7 @@ pub fn ensure_env_release(
       case fetch_release(repo, None) {
         Ok(release) ->
           case
-            select_env_runtime(
-              release_runtimes(release),
-              env,
-              release.tag_name,
-            )
+            select_env_runtime(release_runtimes(release), env, release.tag_name)
           {
             Ok(selected) -> ensure_cached(selected)
             Error(_) -> ensure_env_from_listing(env, repo)
@@ -218,9 +213,7 @@ pub fn ensure_atomvmlib(
   case find_atomvmlib_asset(release) {
     None ->
       Error(FileError(
-        "Release "
-        <> release.tag_name
-        <> " has no atomvmlib-*.avm asset.",
+        "Release " <> release.tag_name <> " has no atomvmlib-*.avm asset.",
       ))
     Some(asset) -> {
       use Nil <- result.try(
@@ -283,10 +276,7 @@ fn ensure_named(name: String, repo: Option(String)) -> Result(Runtime, Error) {
   }
 }
 
-fn local_runtime_dir(
-  path: String,
-  env: Option(Env),
-) -> Result(Runtime, Error) {
+fn local_runtime_dir(path: String, env: Option(Env)) -> Result(Runtime, Error) {
   let js = js_path(path)
   let wasm = wasm_path(path)
   use Nil <- result.try(case simplifile.is_file(js) {
@@ -627,7 +617,10 @@ fn find_cached_by_name(wanted: String) -> Option(Runtime) {
 fn is_runtime_dir(path: String) -> Bool {
   case simplifile.is_directory(path) {
     Ok(True) ->
-      case simplifile.is_file(js_path(path)), simplifile.is_file(wasm_path(path)) {
+      case
+        simplifile.is_file(js_path(path)),
+        simplifile.is_file(wasm_path(path))
+      {
         Ok(True), Ok(True) -> True
         _, _ -> False
       }
@@ -649,7 +642,10 @@ fn render_runtime_lines(runtimes: List(Runtime)) -> String {
           Some(js), Some(wasm) -> "  " <> format_kb(js + wasm)
           _, _ -> ""
         }
-        "  " <> env_token(r.env) <> "  " <> runtime_dir_name(r.env, r.version)
+        "  "
+        <> env_token(r.env)
+        <> "  "
+        <> runtime_dir_name(r.env, r.version)
         <> channel
         <> size
       })

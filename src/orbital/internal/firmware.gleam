@@ -224,11 +224,7 @@ pub fn select_release_image(
           Error(NoImageForChip(tag:, chip: chip_token, chips:))
         }
         [erlang, ..] ->
-          Error(NoElixirImage(
-            tag:,
-            chip: chip_token,
-            erlang_name: erlang.name,
-          ))
+          Error(NoElixirImage(tag:, chip: chip_token, erlang_name: erlang.name))
       }
   }
 }
@@ -279,7 +275,12 @@ pub fn parse_repo_arg(arg: String) -> Result(String, Error) {
 
   case string.split(repo, on: "/") {
     [owner, name] ->
-      case owner != "" && name != "" && valid_repo_part(owner) && valid_repo_part(name) {
+      case
+        owner != ""
+        && name != ""
+        && valid_repo_part(owner)
+        && valid_repo_part(name)
+      {
         True -> Ok(owner <> "/" <> name)
         False -> Error(InvalidRepo(arg))
       }
@@ -335,19 +336,22 @@ pub fn image_chip(image: Image) -> Option(String) {
 }
 
 /// Slice `factory` and `boot.avm` from a plain `.img` for `--update`.
-pub fn slice_image(
-  img: BitArray,
-  base: Int,
-) -> Result(UpdateParts, Error) {
+pub fn slice_image(img: BitArray, base: Int) -> Result(UpdateParts, Error) {
   let table_start = partition_table_offset - base
   let need = table_start + partition_table_size
   case bit_array.byte_size(img) < need {
     True -> Error(BadImage("truncated firmware image"))
     False -> {
-      use table <- result.try(slice_bytes(img, table_start, partition_table_size))
+      use table <- result.try(slice_bytes(
+        img,
+        table_start,
+        partition_table_size,
+      ))
       use partitions <- result.try(
         partition.parse(table)
-        |> result.map_error(fn(_) { PartitionMismatch("unreadable image table") }),
+        |> result.map_error(fn(_) {
+          PartitionMismatch("unreadable image table")
+        }),
       )
       use factory <- result.try(named_partition(partitions, "factory"))
       use boot <- result.try(named_partition(partitions, "boot.avm"))
@@ -552,9 +556,9 @@ pub fn gitignore_hint(gitignore: Option(String)) -> Option(String) {
     list.any(lines, fn(line) {
       let trimmed = string.trim(line)
       trimmed == "firmware_images"
-        || trimmed == "firmware_images/"
-        || trimmed == "/firmware_images"
-        || trimmed == "/firmware_images/"
+      || trimmed == "firmware_images/"
+      || trimmed == "/firmware_images"
+      || trimmed == "/firmware_images/"
     })
   case ignored {
     True -> None
@@ -641,9 +645,12 @@ pub fn verify_bundle_members(
   let wanted = list.append([img_name <> ".sha256"], summed)
   use Nil <- result.try(members_present(names, wanted, file))
   use image <- result.try(member_bytes(members, img_name, file))
-  use Nil <- result.try(
-    check_listed_sha256(members, img_name <> ".sha256", [img_name], file),
-  )
+  use Nil <- result.try(check_listed_sha256(
+    members,
+    img_name <> ".sha256",
+    [img_name],
+    file,
+  ))
   use Nil <- result.try(case list.contains(names, "SHA256SUMS") {
     True -> check_listed_sha256(members, "SHA256SUMS", summed, file)
     False -> Ok(Nil)
@@ -727,8 +734,7 @@ pub fn bundle_update_parts(
         missing, _ ->
           Error(BadBundle(
             file: bundle.stem <> ".zip",
-            detail: "missing "
-              <> string.join(missing, with: ", "),
+            detail: "missing " <> string.join(missing, with: ", "),
           ))
       }
     }
@@ -859,9 +865,7 @@ fn valid_chip(chip: String) -> Bool {
           case string.split(rest, on: "_") {
             [first, ..variants] ->
               case first {
-                "" ->
-                  list.all(variants, valid_chip_variant)
-                  && variants != []
+                "" -> list.all(variants, valid_chip_variant) && variants != []
                 _ ->
                   valid_chip_family(first)
                   && list.all(variants, valid_chip_variant)
@@ -876,9 +880,7 @@ fn valid_chip(chip: String) -> Bool {
 fn valid_chip_family(token: String) -> Bool {
   case string.to_graphemes(token) {
     [first, ..digits] ->
-      is_lower_letter(first)
-      && digits != []
-      && list.all(digits, is_digit)
+      is_lower_letter(first) && digits != [] && list.all(digits, is_digit)
     [] -> False
   }
 }
@@ -910,7 +912,10 @@ fn valid_version(version: String) -> Bool {
       }
       case string.split(numbers, on: ".") {
         [a, b, c] ->
-          is_int(a) && is_int(b) && is_int(c) && case rest {
+          is_int(a)
+          && is_int(b)
+          && is_int(c)
+          && case rest {
             None -> True
             Some(r) -> r != ""
           }
@@ -1350,15 +1355,11 @@ fn check_parts_in_image(
 ) -> Result(Nil, Error) {
   list.try_fold(over: flash.parts, from: Nil, with: fn(_, part) {
     case list.key_find(members, part.name) {
-      Error(_) ->
-        Error(BadBundle(file:, detail: "missing part " <> part.name))
+      Error(_) -> Error(BadBundle(file:, detail: "missing part " <> part.name))
       Ok(data) -> {
         let start = part.offset - flash.flash_offset
         let size = bit_array.byte_size(data)
-        case
-          start >= 0
-          && start + size <= bit_array.byte_size(image)
-        {
+        case start >= 0 && start + size <= bit_array.byte_size(image) {
           False ->
             Error(BadBundle(
               file:,
@@ -1442,7 +1443,11 @@ fn result_to_option(result: Result(a, b)) -> Option(a) {
   }
 }
 
-fn string_replace_end(value: String, suffix: String, with with_: String) -> String {
+fn string_replace_end(
+  value: String,
+  suffix: String,
+  with with_: String,
+) -> String {
   case string.ends_with(value, suffix) {
     True -> string.drop_end(value, string.length(suffix)) <> with_
     False -> value

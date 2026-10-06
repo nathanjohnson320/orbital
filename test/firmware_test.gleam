@@ -12,8 +12,7 @@ pub fn main() -> Nil {
 }
 
 pub fn parse_name_elixir_release_test() {
-  let assert Ok(image) =
-    firmware.parse_name("AtomVM-esp32s3-elixir-v0.6.6.img")
+  let assert Ok(image) = firmware.parse_name("AtomVM-esp32s3-elixir-v0.6.6.img")
   assert image.name == "AtomVM-esp32s3-elixir-v0.6.6"
   assert image.chip == Some("esp32s3")
   assert image.base_chip == Some("esp32s3")
@@ -118,9 +117,12 @@ pub fn ensure_path_local_img_test() {
 }
 
 pub fn select_release_image_exact_chip_and_elixir_test() {
-  let assert Ok(esp32) = firmware.parse_name("AtomVM-esp32-elixir-v0.7.0-alpha.1.img")
-  let assert Ok(esp32_erl) = firmware.parse_name("AtomVM-esp32-v0.7.0-alpha.1.img")
-  let assert Ok(p4) = firmware.parse_name("AtomVM-esp32p4-elixir-v0.7.0-alpha.1.img")
+  let assert Ok(esp32) =
+    firmware.parse_name("AtomVM-esp32-elixir-v0.7.0-alpha.1.img")
+  let assert Ok(esp32_erl) =
+    firmware.parse_name("AtomVM-esp32-v0.7.0-alpha.1.img")
+  let assert Ok(p4) =
+    firmware.parse_name("AtomVM-esp32p4-elixir-v0.7.0-alpha.1.img")
   let assert Ok(p4_pre) =
     firmware.parse_name("AtomVM-esp32p4_pre-elixir-v0.7.0-alpha.1.img")
   let images = [esp32, esp32_erl, p4, p4_pre]

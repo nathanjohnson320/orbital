@@ -326,7 +326,10 @@ fn validate_layout_loop(
   }
 }
 
-fn overlaps_previous(previous: Option(Partition), partition: Partition) -> Bool {
+fn overlaps_previous(
+  previous: Option(Partition),
+  partition: Partition,
+) -> Bool {
   case previous {
     Some(prev) -> prev.offset + prev.size > partition.offset
     None -> False

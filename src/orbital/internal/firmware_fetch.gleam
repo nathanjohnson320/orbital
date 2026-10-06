@@ -55,8 +55,8 @@ pub fn list_images_text(
       [],
       list.append(header, [
         "Warning: "
-          <> firmware.error_message(error)
-          <> ". Only local images are listed.",
+        <> firmware.error_message(error)
+        <> ". Only local images are listed.",
       ]),
     )
   }
@@ -127,10 +127,7 @@ pub fn ensure_release(
 }
 
 /// Resolve a published image name (or custom-repo basename) and cache it.
-pub fn ensure_name(
-  name: String,
-  repo: Option(String),
-) -> Result(Image, Error) {
+pub fn ensure_name(name: String, repo: Option(String)) -> Result(Image, Error) {
   let parsed = firmware.parse_name(name)
   let wanted = case parsed {
     Ok(image) -> string.lowercase(image.name)
@@ -167,7 +164,9 @@ pub fn ensure_name(
     }
     Some(repo) -> {
       let source = CustomRepo(repo)
-      use releases <- result.try(fetch_json_list(releases_url(source, ListPage)))
+      use releases <- result.try(
+        fetch_json_list(releases_url(source, ListPage)),
+      )
       let found =
         list.flat_map(releases, fn(release) {
           case release_draft(release) {
@@ -290,7 +289,11 @@ fn local_images() -> List(Image) {
   list.append(cached, files_in(build_images_dir, build_images_dir, Build))
 }
 
-fn files_in(directory: String, shown_as: String, source: Source) -> List(Image) {
+fn files_in(
+  directory: String,
+  shown_as: String,
+  source: Source,
+) -> List(Image) {
   case simplifile.read_directory(directory) {
     Ok(entries) ->
       list.filter_map(list.sort(entries, string.compare), fn(file) {
@@ -370,8 +373,8 @@ fn render_list(
     Some(chips) ->
       list.append(header, [
         "Showing images for "
-          <> string.join(chips, with: ", ")
-          <> "; pass --chip all to list every image.",
+        <> string.join(chips, with: ", ")
+        <> "; pass --chip all to list every image.",
       ])
     None -> header
   }
@@ -527,9 +530,11 @@ fn download_release(
 ) -> Result(Image, Error) {
   use release <- result.try(fetch_release(source, version))
   let images = release_images(release, source)
-  use image <- result.try(
-    firmware.select_release_image(images, release.tag_name, chip),
-  )
+  use image <- result.try(firmware.select_release_image(
+    images,
+    release.tag_name,
+    chip,
+  ))
   ensure_cached(image)
 }
 
@@ -542,7 +547,9 @@ fn fetch_release(
       case fetch_json_release(releases_url(source, Latest)) {
         Ok(release) -> Ok(release)
         Error(_) -> {
-          use releases <- result.try(fetch_json_list(releases_url(source, ListPage)))
+          use releases <- result.try(
+            fetch_json_list(releases_url(source, ListPage)),
+          )
           case list.filter(releases, fn(r) { !r.draft }) {
             [release, ..] -> Ok(release)
             [] -> Error(ReleaseNotFound("latest"))
@@ -600,13 +607,15 @@ fn release_images(release: Release, source: Source) -> List(Image) {
   let sidecars =
     list.filter_map(release.assets, fn(asset) {
       case string.ends_with(asset.name, ".sha256") {
-        True ->
-          Ok(#(string.drop_end(asset.name, 7), asset.url))
+        True -> Ok(#(string.drop_end(asset.name, 7), asset.url))
         False -> Error(Nil)
       }
     })
   list.filter_map(release.assets, fn(asset) {
-    case string.ends_with(asset.name, ".img") || string.ends_with(asset.name, ".zip") {
+    case
+      string.ends_with(asset.name, ".img")
+      || string.ends_with(asset.name, ".zip")
+    {
       False -> Error(Nil)
       True ->
         case asset_image(asset.name, release.tag_name, source) {
@@ -680,9 +689,7 @@ fn ensure_cached(image: Image) -> Result(Image, Error) {
       finish_cached(Image(..image, path: Some(path)), path)
     }
     _ -> {
-      io.println(
-        "Downloading " <> option.unwrap(image.file, image.name) <> "…",
-      )
+      io.println("Downloading " <> option.unwrap(image.file, image.name) <> "…")
       use #(data, status) <- result.try(download_verified(image))
       use Nil <- result.try(write_atomically(path, data))
       case status {
@@ -839,7 +846,10 @@ fn download_verified(image: Image) -> Result(#(BitArray, String), Error) {
   case expected {
     None -> Ok(#(data, "unverified"))
     Some(hex) -> {
-      let actual = string.lowercase(bit_array.base16_encode(crypto.hash(crypto.Sha256, data)))
+      let actual =
+        string.lowercase(
+          bit_array.base16_encode(crypto.hash(crypto.Sha256, data)),
+        )
       case actual == string.lowercase(hex) {
         True -> Ok(#(data, "verified"))
         False ->
@@ -888,7 +898,11 @@ fn parse_sha256_lines(text: String) -> List(#(String, String)) {
     case string.split(string.trim(line), on: " ") {
       [hex, name, ..] ->
         case string.length(hex) == 64 {
-          True -> Ok(#(hex, string.trim_start(name) |> string.trim_start |> strip_star))
+          True ->
+            Ok(#(
+              hex,
+              string.trim_start(name) |> string.trim_start |> strip_star,
+            ))
           False -> Error(Nil)
         }
       _ -> Error(Nil)
@@ -910,7 +924,10 @@ fn digest_from_asset(asset: Asset) -> Option(String) {
   }
 }
 
-fn sidecar_url(sidecars: List(#(String, String)), name: String) -> Option(String) {
+fn sidecar_url(
+  sidecars: List(#(String, String)),
+  name: String,
+) -> Option(String) {
   case list.key_find(sidecars, name) {
     Ok(url) -> Some(url)
     Error(_) -> None
@@ -922,7 +939,10 @@ fn rolling_stamp(
   release: Release,
   asset: Asset,
 ) -> Option(String) {
-  case string.starts_with(release.tag_name, "v") && digit_after_v_tag(release.tag_name) {
+  case
+    string.starts_with(release.tag_name, "v")
+    && digit_after_v_tag(release.tag_name)
+  {
     True -> None
     False ->
       case image.kind {
@@ -1040,7 +1060,9 @@ fn write_atomically(path: String, data: BitArray) -> Result(Nil, Error) {
     |> result.map_error(fn(_) { firmware.FileError("Could not write " <> part) }),
   )
   simplifile.rename(at: part, to: path)
-  |> result.map_error(fn(_) { firmware.FileError("Could not finalize " <> path) })
+  |> result.map_error(fn(_) {
+    firmware.FileError("Could not finalize " <> path)
+  })
 }
 
 // --- HTTP / JSON -------------------------------------------------------------
@@ -1085,13 +1107,10 @@ fn fetch_binary(url: String) -> Result(BitArray, Error) {
     Ok(response) if response.status >= 200 && response.status < 300 ->
       Ok(response.body)
     Ok(response) ->
-      Error(Network(
-        "HTTP " <> int.to_string(response.status) <> " for " <> url,
-      ))
+      Error(Network("HTTP " <> int.to_string(response.status) <> " for " <> url))
     Error(httpc.FailedToConnect(..)) ->
       Error(Network("Network error for " <> url))
-    Error(httpc.ResponseTimeout) ->
-      Error(Network("Timed out fetching " <> url))
+    Error(httpc.ResponseTimeout) -> Error(Network("Timed out fetching " <> url))
     Error(httpc.InvalidUtf8Response) ->
       Error(Network("Invalid response from " <> url))
   }
@@ -1106,8 +1125,16 @@ fn release_decoder() -> decode.Decoder(Release) {
     None,
     decode.optional(decode.string),
   )
-  use body <- decode.optional_field("body", None, decode.optional(decode.string))
-  use assets <- decode.optional_field("assets", [], decode.list(asset_decoder()))
+  use body <- decode.optional_field(
+    "body",
+    None,
+    decode.optional(decode.string),
+  )
+  use assets <- decode.optional_field(
+    "assets",
+    [],
+    decode.list(asset_decoder()),
+  )
   decode.success(Release(
     tag_name:,
     draft:,
@@ -1191,7 +1218,11 @@ fn map_zip_error(result: Result(a, String)) -> Result(a, Error) {
   }
 }
 
-fn string_replace_end(text: String, suffix: String, with with: String) -> String {
+fn string_replace_end(
+  text: String,
+  suffix: String,
+  with with: String,
+) -> String {
   case string.ends_with(text, suffix) {
     True -> string.drop_end(text, string.length(suffix)) <> with
     False -> text

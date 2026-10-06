@@ -63,9 +63,7 @@ fn list_images(options: Options) -> Result(Nil, Error) {
   Ok(Nil)
 }
 
-fn list_filter(
-  chip: Option(String),
-) -> #(Option(List(String)), List(String)) {
+fn list_filter(chip: Option(String)) -> #(Option(List(String)), List(String)) {
   case chip {
     Some("all") -> #(None, [])
     Some(chip) -> #(Some([chip]), [])
@@ -79,10 +77,9 @@ fn list_filter(
             |> list.unique
           #(Some(chips), list.map(devices, connected_line))
         }
-        Error(_) -> #(
-          None,
-          ["Could not probe ESP32 devices, listing every image."],
-        )
+        Error(_) -> #(None, [
+          "Could not probe ESP32 devices, listing every image.",
+        ])
       }
   }
 }
@@ -103,7 +100,8 @@ fn connected_line(device: esp32.Device) -> String {
 
 fn download_only(options: Options) -> Result(Nil, Error) {
   use image <- result.try(resolve_for_download(options))
-  let path = option.unwrap(image.path, option.unwrap(image.img_path, image.name))
+  let path =
+    option.unwrap(image.path, option.unwrap(image.img_path, image.name))
   io.println("")
   io.println(
     path
@@ -157,16 +155,14 @@ fn do_install(
     |> map_esp32_error,
   )
   io.println("")
-  io.println(
-    ansi.magenta(
-      "Successfully installed AtomVM on "
-      <> device.chip_family_name
-      <> " - Port: "
-      <> device.port
-      <> " MAC: "
-      <> device.mac_address,
-    ),
-  )
+  io.println(ansi.magenta(
+    "Successfully installed AtomVM on "
+    <> device.chip_family_name
+    <> " - Port: "
+    <> device.port
+    <> " MAC: "
+    <> device.mac_address,
+  ))
   io.println("")
   io.println("Your project can now be flashed with:")
   io.println("  gleam run -m orbital flash esp32")
@@ -238,27 +234,21 @@ fn do_update(
       use Nil <- result.try(write_bits(app_path, parts.app))
       use Nil <- result.try(write_bits(lib_path, parts.lib))
       use Nil <- result.try(
-        esp32.write_flash_parts(
-          port: device.port,
-          baud:,
-          parts: [
-            #(parts.app_offset, app_path),
-            #(parts.lib_offset, lib_path),
-          ],
-        )
+        esp32.write_flash_parts(port: device.port, baud:, parts: [
+          #(parts.app_offset, app_path),
+          #(parts.lib_offset, lib_path),
+        ])
         |> map_esp32_error,
       )
       io.println("")
-      io.println(
-        ansi.magenta(
-          "Successfully updated AtomVM on "
-          <> device.chip_family_name
-          <> " - Port: "
-          <> device.port
-          <> " MAC: "
-          <> device.mac_address,
-        ),
-      )
+      io.println(ansi.magenta(
+        "Successfully updated AtomVM on "
+        <> device.chip_family_name
+        <> " - Port: "
+        <> device.port
+        <> " MAC: "
+        <> device.mac_address,
+      ))
       io.println("")
       io.println(
         "The application in main.avm was kept; a new one can be flashed with:",
@@ -383,7 +373,7 @@ fn confirm_install(
           <> " MAC: "
           <> device.mac_address,
         "and install " <> first,
-        ..list.append(rest, list.append(warnings, ["Continue? [N/y]: "])),
+        ..list.append(rest, list.append(warnings, ["Continue? [N/y]: "]))
       ],
       with: "\n",
     )
@@ -444,7 +434,7 @@ fn confirm_update(
           <> device.port
           <> " MAC: "
           <> device.mac_address,
-        ..list.append(summary, list.append(warnings, ["Continue? [N/y]: "])),
+        ..list.append(summary, list.append(warnings, ["Continue? [N/y]: "]))
       ],
       with: "\n",
     )

@@ -114,9 +114,7 @@ fn do_install(options: Options) -> Result(Nil, Error) {
   Ok(Nil)
 }
 
-fn resolve_envs(
-  env: Option(String),
-) -> Result(List(wasm_firmware.Env), Error) {
+fn resolve_envs(env: Option(String)) -> Result(List(wasm_firmware.Env), Error) {
   case env {
     None -> Ok([wasm_firmware.Node, wasm_firmware.Web])
     Some("all") -> Ok([wasm_firmware.Node, wasm_firmware.Web])
@@ -127,7 +125,9 @@ fn resolve_envs(
   }
 }
 
-fn optional_env(env: Option(String)) -> Result(Option(wasm_firmware.Env), Error) {
+fn optional_env(
+  env: Option(String),
+) -> Result(Option(wasm_firmware.Env), Error) {
   case env {
     None | Some("all") -> Ok(None)
     Some(raw) ->
