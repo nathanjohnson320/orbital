@@ -7,3 +7,6 @@ erl_crash.dump
 /_build/atomvm_images
 priv/__pycache__/
 *.pyc
+priv/orbital_serial.so
+priv/orbital_serial.dll
+priv/native/**/*.o

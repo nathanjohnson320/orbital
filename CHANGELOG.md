@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Replaced `priv/monitor.py` with a Gleam + libserialport NIF monitor
+  (`make -C priv/native`, platform prebuilts under `priv/`). Flash still uses
+  `priv/esp32.py`.
 - Added WASM / Emscripten support (beyond ExAtomVM, which has no WASM tasks).
   AtomVM publishes separate Node and browser builds; Orbital downloads them
   into `firmware_images/AtomVM-{node,web}-<version>/` as `AtomVM.js` +

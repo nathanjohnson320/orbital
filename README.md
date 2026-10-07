@@ -60,8 +60,12 @@ and updates the bootloader flash-size header when needed. Use it when an app
 no longer fits the stock `main.avm` slot.
 
 `monitor` reads the serial console for 10 seconds. `--timeout 0` reads until
-Ctrl+C, pressed twice. The port is chosen when only one USB serial device is
-connected.
+Ctrl+C. The port is chosen when only one USB serial device is connected.
+
+`monitor` uses a libserialport NIF (`priv/native/`, LGPL-3.0+). Installs load
+`priv/orbital_serial-<triple>.so` (e.g. `aarch64-apple-darwin`); a local
+`orbital_serial.so` from `make -C priv/native` overrides it. Flash still uses
+`priv/esp32.py`.
 
 `erase-flash` wipes the entire flash of a connected ESP32. Pass `--port` when
 more than one board is connected.

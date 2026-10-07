@@ -1,0 +1,2 @@
+Vendored libserialport (https://sigrok.org/wiki/Libserialport) is LGPL-3.0+.
+See vendor/libserialport/COPYING. orbital_serial.c is Apache-2.0.

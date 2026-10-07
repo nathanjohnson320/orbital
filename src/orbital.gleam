@@ -16,6 +16,7 @@ import orbital/internal/esp32
 import orbital/internal/executable.{type ExecutablePath}
 import orbital/internal/image_header
 import orbital/internal/install
+import orbital/internal/monitor
 import orbital/internal/partition
 import orbital/internal/pico
 import orbital/internal/pico_install
@@ -298,7 +299,7 @@ fn monitor(
   let port = option.unwrap(port, "auto")
   let baud = option.unwrap(baud, default_monitor_baud)
   let timeout = option.unwrap(timeout, default_monitor_timeout)
-  case monitor_serial(port, baud, reset, timeout) {
+  case monitor.run(port, baud, reset, timeout) {
     Ok(Nil) ->
       case timeout {
         0 -> Nil
@@ -1142,14 +1143,6 @@ fn packbeam_create(
 
 @external(erlang, "orbital_ffi", "packbeam_list")
 fn packbeam_list(input_path input_path: String) -> Result(List(String), Nil)
-
-@external(erlang, "orbital_ffi", "monitor")
-fn monitor_serial(
-  port: String,
-  baud: Int,
-  reset: Bool,
-  timeout_seconds: Int,
-) -> Result(Nil, String)
 
 fn resolve_offset(
   esptool: ExecutablePath,

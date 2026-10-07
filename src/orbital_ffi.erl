@@ -7,7 +7,6 @@
     run_streaming_executable/3,
     find_executable/1,
     run_named_executable/2,
-    monitor/4,
     esp32_list_devices/0,
     esp32_select_port/1,
     esp32_select_device/1,
@@ -189,27 +188,6 @@ wildcard(Pattern) ->
         unsafe_characters_to_binary(Path)
      || Path <- filelib:wildcard(unsafe_characters_to_list(Pattern))
     ].
-
-%% Shows the ESP32 console. The Python interpreter is taken from esptool's
-%% shebang, because that environment has pyserial.
-monitor(Port, Baud, Reset, Timeout) ->
-    case interpreter() of
-        {error, Reason} -> {error, Reason};
-        {ok, Python} ->
-            case priv_script(<<"monitor.py">>) of
-                {error, Reason} -> {error, Reason};
-                {ok, Script} ->
-                    run_streaming(Python, [
-                        "-u", Script, "--port", Port,
-                        "--baud", integer_to_binary(Baud),
-                        "--timeout", integer_to_binary(Timeout)
-                        | reset_arg(Reset)
-                    ])
-            end
-    end.
-
-reset_arg(true) -> [];
-reset_arg(false) -> ["--no-reset"].
 
 %% --- ESP32 helpers (priv/esp32.py) -----------------------------------------
 %%
@@ -402,27 +380,6 @@ collect_loop(Port, Acc) ->
                 Trimmed -> Trimmed
             end,
             {error, Reason}
-    end.
-
-run_streaming(Python, Args) ->
-    Port = open_port({spawn_executable, Python}, [
-        {args, [to_charlist(Arg) || Arg <- Args]},
-        binary,
-        exit_status,
-        stderr_to_stdout,
-        use_stdio
-    ]),
-    monitor_loop(Port).
-
-monitor_loop(Port) ->
-    receive
-        {Port, {data, Data}} ->
-            io:put_chars(Data),
-            monitor_loop(Port);
-        {Port, {exit_status, 0}} ->
-            {ok, nil};
-        {Port, {exit_status, _}} ->
-            {error, <<>>}
     end.
 
 to_charlist(Value) when is_binary(Value) -> binary_to_list(Value);
