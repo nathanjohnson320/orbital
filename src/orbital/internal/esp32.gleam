@@ -1,19 +1,18 @@
-//// Shared ESP32 device helpers for later Orbital commands.
+//// Shared ESP32 device helpers for Orbital commands.
 ////
-//// Wraps `priv/esp32.py` (esptool / pyserial) for device discovery, flash
-//// erase/read/write, and port selection. Pure partition / image-header logic
-//// lives in `partition` and `image_header`; this module is the device I/O
-//// boundary. No user-facing CLI commands are defined here.
+//// Wraps the `orbital_esp` NIF (esp-serial-flasher + libserialport) for device
+//// discovery, flash erase/read/write, and port selection. Pure partition /
+//// image-header logic lives in `partition` and `image_header`; this module is
+//// the device I/O boundary.
 
 import filepath
 import gleam/bit_array
-import gleam/dynamic/decode
 import gleam/int
-import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
+import orbital/internal/image_header
 import simplifile
 import temporary
 
@@ -45,7 +44,7 @@ pub type FlashRead {
 }
 
 pub type Error {
-  /// esptool / python / helper script could not be located or started.
+  /// Native flash NIF could not be located or loaded.
   ToolingMissing(reason: String)
   /// Helper ran but reported a device or protocol failure.
   DeviceError(reason: String)
@@ -53,14 +52,8 @@ pub type Error {
 
 /// List ESP32-like USB serial devices and probe each for AtomVM metadata.
 pub fn list_devices() -> Result(List(Device), Error) {
-  use raw <- result.try(list_devices_ffi() |> map_ffi_error)
-  case json.parse(raw, decode.list(device_decoder())) {
-    Ok(devices) -> Ok(devices)
-    Error(_) ->
-      Error(DeviceError(
-        reason: "ESP32 helper list-devices returned invalid JSON.",
-      ))
-  }
+  list_devices_ffi()
+  |> map_ffi_error
 }
 
 /// Resolve `auto` to a single connected device port, or return an explicit port.
@@ -68,29 +61,17 @@ pub fn list_devices() -> Result(List(Device), Error) {
 /// With zero devices or more than one, returns `DeviceError` with a message that
 /// tells the caller to pass `--port`.
 pub fn select_port(port: String) -> Result(String, Error) {
-  use raw <- result.try(select_port_ffi(port) |> map_ffi_error)
-  case json.parse(raw, decode.at(["port"], decode.string)) {
-    Ok(resolved) -> Ok(resolved)
-    Error(_) ->
-      Error(DeviceError(
-        reason: "ESP32 helper select-port returned invalid JSON.",
-      ))
-  }
+  select_port_ffi(port)
+  |> map_ffi_error
 }
 
 /// Resolve a port and return the matching probed device record.
 pub fn select_device(port: String) -> Result(Device, Error) {
-  use raw <- result.try(select_device_ffi(port) |> map_ffi_error)
-  case json.parse(raw, device_decoder()) {
-    Ok(device) -> Ok(device)
-    Error(_) ->
-      Error(DeviceError(
-        reason: "ESP32 helper select-device returned invalid JSON.",
-      ))
-  }
+  select_device_ffi(port)
+  |> map_ffi_error
 }
 
-/// Flash a full firmware `.img` at `address` using esptool's write-flash.
+/// Flash a full firmware `.img` at `address`.
 pub fn write_flash_image(
   port port: String,
   baud baud: Int,
@@ -101,7 +82,7 @@ pub fn write_flash_image(
   |> map_ffi_error
 }
 
-/// Flash multiple `(address, file)` parts in one esptool write-flash call.
+/// Flash multiple `(address, file)` parts in one session.
 pub fn write_flash_parts(
   port port: String,
   baud baud: Int,
@@ -127,17 +108,8 @@ pub fn read_flash(
   output_path output_path: String,
   reset_after reset_after: Bool,
 ) -> Result(FlashRead, Error) {
-  use raw <- result.try(
-    read_flash_ffi(port, address, size, output_path, reset_after)
-    |> map_ffi_error,
-  )
-  case json.parse(raw, flash_read_decoder()) {
-    Ok(meta) -> Ok(meta)
-    Error(_) ->
-      Error(DeviceError(
-        reason: "ESP32 helper read-flash returned invalid JSON.",
-      ))
-  }
+  read_flash_ffi(port, address, size, output_path, reset_after)
+  |> map_ffi_error
 }
 
 /// Write the contents of `file_path` to flash at `address`.
@@ -152,8 +124,7 @@ pub fn write_flash_data(
 
 /// Update the bootloader flash-size header and rewrite the partition table.
 ///
-/// Uses esptool's image-header rewriter so flash mode/frequency stay `keep`
-/// while the size matches `flash_size_name` (e.g. `"16MB"`).
+/// Rewrites the size nibble in Gleam (`image_header`), then flashes both images.
 pub fn write_flash_size_and_partition(
   port port: String,
   bootloader_offset bootloader_offset: Int,
@@ -162,15 +133,43 @@ pub fn write_flash_size_and_partition(
   partition_path partition_path: String,
   flash_size_name flash_size_name: String,
 ) -> Result(Nil, Error) {
-  write_flash_size_and_partition_ffi(
-    port,
-    bootloader_offset,
-    bootloader_path,
-    partition_offset,
-    partition_path,
-    flash_size_name,
+  use bootloader <- result.try(
+    simplifile.read_bits(bootloader_path)
+    |> result.replace_error(DeviceError(
+      reason: "Could not read staged bootloader at " <> bootloader_path,
+    )),
   )
-  |> map_ffi_error
+  use updated <- result.try(
+    image_header.with_flash_size_name(bootloader, flash_size_name)
+    |> result.map_error(fn(_) {
+      DeviceError(reason: "Invalid bootloader image header")
+    }),
+  )
+  let outcome = {
+    use directory <- temporary.create(temporary.directory())
+    let updated_path = filepath.join(directory, "bootloader-updated.bin")
+    use Nil <- result.try(
+      simplifile.write_bits(to: updated_path, bits: updated)
+      |> result.replace_error(DeviceError(
+        reason: "Could not stage updated bootloader",
+      )),
+    )
+    write_flash_parts(
+      port:,
+      baud: 921_600,
+      parts: [
+        #(bootloader_offset, updated_path),
+        #(partition_offset, partition_path),
+      ],
+    )
+  }
+  case outcome {
+    Ok(result) -> result
+    Error(_) ->
+      Error(DeviceError(
+        reason: "Could not write bootloader and partition table",
+      ))
+  }
 }
 
 /// Read a flash region into memory via a temporary file.
@@ -347,44 +346,6 @@ pub fn byte_size(data: BitArray) -> Int {
   bit_array.byte_size(data)
 }
 
-fn device_decoder() -> decode.Decoder(Device) {
-  use port <- decode.field("port", decode.string)
-  use chip_family_name <- decode.field("chip_family_name", decode.string)
-  use mac_address <- decode.field("mac_address", decode.string)
-  use usb_mode <- decode.field("usb_mode", decode.string)
-  use atomvm_installed <- decode.field("atomvm_installed", decode.bool)
-  use build_info <- decode.field("build_info", decode.list(decode.string))
-  use features <- decode.field("features", decode.list(decode.string))
-  decode.success(Device(
-    port:,
-    chip_family_name:,
-    mac_address:,
-    usb_mode:,
-    atomvm_installed:,
-    build_info:,
-    features:,
-  ))
-}
-
-fn flash_read_decoder() -> decode.Decoder(FlashRead) {
-  use bootloader_offset <- decode.field("bootloader_offset", decode.int)
-  use chip_name <- decode.field("chip_name", decode.string)
-  use flash_size <- decode.field("flash_size", decode.int)
-  use flash_size_id <- decode.field("flash_size_id", decode.int)
-  use flash_size_name <- decode.field("flash_size_name", decode.string)
-  use bytes_written <- decode.field("bytes_written", decode.int)
-  use output <- decode.field("output", decode.string)
-  decode.success(FlashRead(
-    bootloader_offset:,
-    chip_name:,
-    flash_size:,
-    flash_size_id:,
-    flash_size_name:,
-    bytes_written:,
-    output:,
-  ))
-}
-
 fn map_ffi_error(result: Result(a, String)) -> Result(a, Error) {
   case result {
     Ok(value) -> Ok(value)
@@ -395,9 +356,8 @@ fn map_ffi_error(result: Result(a, String)) -> Result(a, Error) {
 fn classify_error(reason: String) -> Error {
   let lowered = string.lowercase(reason)
   case
-    string.contains(lowered, "cannot find")
-    || string.contains(lowered, "not installed")
-    || string.contains(lowered, "not found")
+    string.contains(lowered, "nif not loaded")
+    || string.contains(lowered, "need priv/orbital_esp")
   {
     True -> ToolingMissing(reason:)
     False -> DeviceError(reason:)
@@ -414,35 +374,35 @@ fn hex_digits(value: Int) -> String {
   }
 }
 
-@external(erlang, "orbital_ffi", "esp32_list_devices")
-fn list_devices_ffi() -> Result(String, String)
+@external(erlang, "orbital_esp_ffi", "list_devices")
+fn list_devices_ffi() -> Result(List(Device), String)
 
-@external(erlang, "orbital_ffi", "esp32_select_port")
+@external(erlang, "orbital_esp_ffi", "select_port")
 fn select_port_ffi(port: String) -> Result(String, String)
 
-@external(erlang, "orbital_ffi", "esp32_select_device")
-fn select_device_ffi(port: String) -> Result(String, String)
+@external(erlang, "orbital_esp_ffi", "select_device")
+fn select_device_ffi(port: String) -> Result(Device, String)
 
-@external(erlang, "orbital_ffi", "esp32_erase_flash")
+@external(erlang, "orbital_esp_ffi", "erase_flash")
 fn erase_flash_ffi(port: String) -> Result(Nil, String)
 
-@external(erlang, "orbital_ffi", "esp32_read_flash")
+@external(erlang, "orbital_esp_ffi", "read_flash")
 fn read_flash_ffi(
   port: String,
   address: Int,
   size: Int,
   output_path: String,
   reset_after: Bool,
-) -> Result(String, String)
+) -> Result(FlashRead, String)
 
-@external(erlang, "orbital_ffi", "esp32_write_flash_data")
+@external(erlang, "orbital_esp_ffi", "write_flash_data")
 fn write_flash_data_ffi(
   port: String,
   address: Int,
   file_path: String,
 ) -> Result(Nil, String)
 
-@external(erlang, "orbital_ffi", "esp32_write_flash_image")
+@external(erlang, "orbital_esp_ffi", "write_flash_image")
 fn write_flash_image_ffi(
   port: String,
   baud: Int,
@@ -450,19 +410,9 @@ fn write_flash_image_ffi(
   file_path: String,
 ) -> Result(Nil, String)
 
-@external(erlang, "orbital_ffi", "esp32_write_flash_parts")
+@external(erlang, "orbital_esp_ffi", "write_flash_parts")
 fn write_flash_parts_ffi(
   port: String,
   baud: Int,
   parts: List(#(Int, String)),
-) -> Result(Nil, String)
-
-@external(erlang, "orbital_ffi", "esp32_write_flash_size_and_partition")
-fn write_flash_size_and_partition_ffi(
-  port: String,
-  bootloader_offset: Int,
-  bootloader_path: String,
-  partition_offset: Int,
-  partition_path: String,
-  flash_size_name: String,
 ) -> Result(Nil, String)

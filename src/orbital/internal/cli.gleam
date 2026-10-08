@@ -163,7 +163,7 @@ pub fn parse(args: List(String)) -> Result(Command, Error) {
     // with "flash" we need a little additional checks: first we need to make
     // sure that the required platform positional argument was provided.
     // If "baud" was provided we need to validate that it's an Int. The ESP32
-    // port is optional: esptool auto-detects it when `--port` is omitted.
+    // port is optional: the flash NIF auto-detects it when `--port` is omitted.
     Ok(hoist.Args(arguments: ["flash", ..rest], flags:)) ->
       case toggled(flags, "help"), rest {
         True, _ ->
@@ -1154,11 +1154,11 @@ pub fn flash_help_text(description: Bool) -> Document {
     doc.lines(2),
     doc.from_string(ansi.magenta("Platforms:")),
     doc.line,
-    command_line("  esp32  ", "this will require `esptool` installed"),
+    command_line("  esp32  ", "uses the packaged orbital_esp NIF (no esptool)"),
     doc.line,
     flag_line(
       "    -p, --port     <STRING>  ",
-      "serial port. esptool auto-detects it when omitted",
+      "serial port. auto-detected when omitted",
     ),
     doc.line,
     flag_line_with_default(

@@ -52,8 +52,8 @@ replace only the VM and `boot.avm` while keeping NVS and `main.avm`.
 
 `flash` reads the device partition table and writes the application at the
 `main.avm` address. Pass `--offset 0x2b8000` to choose an address yourself.
-Esptool auto-detects the serial port; pass `--port /dev/some_device` when more
-than one board is connected.
+The flash NIF auto-detects the serial port; pass `--port /dev/some_device`
+when more than one board is connected.
 
 `expand` grows the final `main.avm` partition to the end of the detected flash
 and updates the bootloader flash-size header when needed. Use it when an app
@@ -62,10 +62,12 @@ no longer fits the stock `main.avm` slot.
 `monitor` reads the serial console for 10 seconds. `--timeout 0` reads until
 Ctrl+C. The port is chosen when only one USB serial device is connected.
 
-`monitor` uses a libserialport NIF (`priv/native/`, LGPL-3.0+). Installs load
-`priv/orbital_serial-<triple>.so` (e.g. `aarch64-apple-darwin`); a local
-`orbital_serial.so` from `make -C priv/native` overrides it. Flash still uses
-`priv/esp32.py`.
+`monitor` and ESP32 flash/info use native NIFs under `priv/native/` (no Python
+or esptool). Installs load `priv/orbital_serial-<triple>.so` and
+`priv/orbital_esp-<triple>.so` (e.g. `aarch64-apple-darwin`); local
+`orbital_serial.so` / `orbital_esp.so` from `make -C priv/native` override
+them. `orbital_serial` vendors libserialport (LGPL-3.0+);
+`orbital_esp` vendors Espressif’s esp-serial-flasher (Apache-2.0).
 
 `erase-flash` wipes the entire flash of a connected ESP32. Pass `--port` when
 more than one board is connected.

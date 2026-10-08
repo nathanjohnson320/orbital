@@ -43,6 +43,14 @@ pub fn flash_size_rejects_invalid_headers_test() {
   |> should.equal(Error(image_header.InvalidImageHeader))
 }
 
+pub fn with_flash_size_name_keeps_frequency_test() {
+  image_header.with_flash_size_name(<<0xe9, 4, 2, 0x2f, 1, 2, 3, 4>>, "16MB")
+  |> should.equal(Ok(<<0xe9, 4, 2, 0x4f, 1, 2, 3, 4>>))
+
+  image_header.with_flash_size_name(<<0xe9, 1, 0, 0x00>>, "8MB")
+  |> should.equal(Ok(<<0xe9, 1, 0, 0x30>>))
+}
+
 pub fn format_device_summarises_atomvm_status_test() {
   esp32.format_device(
     esp32.Device(

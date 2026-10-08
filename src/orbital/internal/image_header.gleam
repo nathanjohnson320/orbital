@@ -1,10 +1,12 @@
 //// ESP32 / ESP-IDF application image header helpers.
 ////
 //// The first bytes of a bootloader or app image carry the flash size in the
-//// high nibble of byte 3. Used by later `expand` work when rewriting the
-//// bootloader header to match detected flash.
+//// high nibble of byte 3. Used by `expand` when rewriting the bootloader
+//// header to match detected flash.
 
+import gleam/bit_array
 import gleam/int
+import gleam/result
 
 pub type Error {
   InvalidImageHeader
@@ -34,4 +36,40 @@ pub fn flash_size(image: BitArray) -> Result(Int, Error) {
     Ok(_) -> Error(UnsupportedFlashSize)
     Error(error) -> Error(error)
   }
+}
+
+/// IDF / esptool flash-size name (e.g. `"16MB"`) to the header size nibble.
+pub fn flash_size_id_for_name(name: String) -> Result(Int, Error) {
+  case name {
+    "1MB" -> Ok(0x00)
+    "2MB" -> Ok(0x10)
+    "4MB" -> Ok(0x20)
+    "8MB" -> Ok(0x30)
+    "16MB" -> Ok(0x40)
+    "32MB" -> Ok(0x50)
+    "64MB" -> Ok(0x60)
+    "128MB" -> Ok(0x70)
+    _ -> Error(UnsupportedFlashSize)
+  }
+}
+
+/// Rewrite the flash-size nibble, keeping mode and frequency bits.
+pub fn with_flash_size_name(
+  image: BitArray,
+  name: String,
+) -> Result(BitArray, Error) {
+  use size_id <- result.try(flash_size_id_for_name(name))
+  case image {
+    <<0xe9, segments, mode, size_frequency, rest:bits>> -> {
+      let frequency = int.bitwise_and(size_frequency, 0x0f)
+      let updated = int.bitwise_or(size_id, frequency)
+      Ok(<<0xe9, segments, mode, updated, rest:bits>>)
+    }
+    _ -> Error(InvalidImageHeader)
+  }
+}
+
+/// Byte length of an image bit array.
+pub fn byte_size(image: BitArray) -> Int {
+  bit_array.byte_size(image)
 }

@@ -1,2 +1,8 @@
 Vendored libserialport (https://sigrok.org/wiki/Libserialport) is LGPL-3.0+.
-See vendor/libserialport/COPYING. orbital_serial.c is Apache-2.0.
+See vendor/libserialport/COPYING.
+
+Vendored esp-serial-flasher (https://github.com/espressif/esp-serial-flasher)
+is Apache-2.0. See vendor/esp-serial-flasher/LICENSE. Bundled flasher stubs are
+from esp-flasher-stub (Apache-2.0 OR MIT).
+
+orbital_serial.c, orbital_esp.c, and libserialport_port.c are Apache-2.0.

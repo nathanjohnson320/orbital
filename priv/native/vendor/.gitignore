@@ -1,0 +1,3 @@
+esp-serial-flasher.git-leftover/
+*.o
+**/*.o
