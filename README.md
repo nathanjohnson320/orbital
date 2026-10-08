@@ -62,15 +62,6 @@ no longer fits the stock `main.avm` slot.
 `monitor` reads the serial console for 10 seconds. `--timeout 0` reads until
 Ctrl+C. The port is chosen when only one USB serial device is connected.
 
-`monitor` and ESP32 flash/info use native NIFs under `priv/native/` (no Python
-or esptool). Installs load `priv/orbital_serial-<triple>.so` and
-`priv/orbital_esp-<triple>.so` (e.g. `aarch64-apple-darwin`); local
-`orbital_serial.so` / `orbital_esp.so` from `make -C priv/native` override
-them. To rebuild every supported triple on a Mac (Darwin arm64/x86_64, Linux
-gnu arm64/x86_64, Windows gnu x86_64), install Zig (`brew install zig`) then
-run `make -C priv/native prebuilts`. `orbital_serial` vendors libserialport
-(LGPL-3.0+); `orbital_esp` vendors Espressif’s esp-serial-flasher (Apache-2.0).
-
 `erase-flash` wipes the entire flash of a connected ESP32. Pass `--port` when
 more than one board is connected.
 
@@ -156,3 +147,22 @@ gleam run -m orbital help
   Gleam code on tiny embedded devices, as cheap as 2$!
   If you think this project is cool, please
   [consider sponsoring it!](https://github.com/sponsors/atomvm)
+
+## Local Development
+
+`monitor` and ESP32 flash/info use native NIFs under `priv/native/`. 
+Published packages ship `priv/orbital_serial-<triple>.so`
+`priv/orbital_esp-<triple>.so` (e.g. `aarch64-apple-darwin`); a local
+`orbital_serial.so` / `orbital_esp.so` from `make -C priv/native` overrides
+them on the host.
+
+To rebuild every supported triple on a Mac (Darwin arm64/x86_64, Linux gnu
+arm64/x86_64, Windows gnu x86_64):
+
+```sh
+brew install zig
+make -C priv/native prebuilts
+```
+
+`orbital_serial` vendors libserialport (LGPL-3.0+);
+`orbital_esp` vendors Espressif’s esp-serial-flasher (Apache-2.0).
