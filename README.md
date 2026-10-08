@@ -66,8 +66,10 @@ Ctrl+C. The port is chosen when only one USB serial device is connected.
 or esptool). Installs load `priv/orbital_serial-<triple>.so` and
 `priv/orbital_esp-<triple>.so` (e.g. `aarch64-apple-darwin`); local
 `orbital_serial.so` / `orbital_esp.so` from `make -C priv/native` override
-them. `orbital_serial` vendors libserialport (LGPL-3.0+);
-`orbital_esp` vendors Espressif’s esp-serial-flasher (Apache-2.0).
+them. To rebuild every supported triple on a Mac (Darwin arm64/x86_64, Linux
+gnu arm64/x86_64, Windows gnu x86_64), install Zig (`brew install zig`) then
+run `make -C priv/native prebuilts`. `orbital_serial` vendors libserialport
+(LGPL-3.0+); `orbital_esp` vendors Espressif’s esp-serial-flasher (Apache-2.0).
 
 `erase-flash` wipes the entire flash of a connected ESP32. Pass `--port` when
 more than one board is connected.

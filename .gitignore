@@ -9,4 +9,8 @@ priv/__pycache__/
 *.pyc
 priv/orbital_serial.so
 priv/orbital_serial.dll
+priv/orbital_esp.so
+priv/orbital_esp.dll
+priv/*.pdb
 priv/native/**/*.o
+priv/native/build/

@@ -1,2 +1,3 @@
 *.o
+build/
 vendor/esp-serial-flasher.git-leftover/
