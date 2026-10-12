@@ -154,14 +154,10 @@ pub fn write_flash_size_and_partition(
         reason: "Could not stage updated bootloader",
       )),
     )
-    write_flash_parts(
-      port:,
-      baud: 921_600,
-      parts: [
-        #(bootloader_offset, updated_path),
-        #(partition_offset, partition_path),
-      ],
-    )
+    write_flash_parts(port:, baud: 921_600, parts: [
+      #(bootloader_offset, updated_path),
+      #(partition_offset, partition_path),
+    ])
   }
   case outcome {
     Ok(result) -> result

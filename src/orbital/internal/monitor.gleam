@@ -2,14 +2,28 @@
 ////
 //// Uses the orbital_serial NIF. Reset order matches ExAtomVM: assert RTS+DTR
 //// after open, release RTS then DTR, optionally pulse RTS for the boot log.
+////
+//// Port auto-detect:
+//// - single USB serial → use it (ESP32 or Pico)
+//// - `esp32` → same ESP32 probe as flash
+//// - `pico` → USB serials that are not probed ESP32 devices
+//// - bare `monitor` with several ports → ESP32 probe when exactly one ESP32
+////   answers; otherwise ask for a platform or `--port`
 
 import gleam/io
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
+import orbital/internal/esp32
 
 pub type SerialPort
+
+pub type Target {
+  Auto
+  Esp32
+  Pico
+}
 
 type PortInfo {
   PortInfo(name: String, description: String, transport: String)
@@ -23,42 +37,97 @@ type ReadResult {
 }
 
 pub fn run(
+  target: Target,
   port: String,
   baud: Int,
   reset: Bool,
   timeout_seconds: Int,
 ) -> Result(Nil, String) {
-  use resolved <- result.try(resolve_port(port))
+  use resolved <- result.try(resolve_port(target, port))
   io.println_error("Serial port " <> resolved)
   read_console(resolved, baud, reset, timeout_seconds)
 }
 
-fn resolve_port(port: String) -> Result(String, String) {
+fn resolve_port(target: Target, port: String) -> Result(String, String) {
   case port {
-    "auto" -> {
-      use found <- result.try(usb_ports())
-      case found {
-        [only] -> Ok(only.name)
-        [] ->
-          Error(
-            "No serial port found.\n"
-            <> "Hold BOOT, tap RESET, release BOOT, and try again.",
-          )
-        many -> {
-          let lines =
-            many
-            |> list.map(fn(info) { "  " <> info.name })
-            |> string.join("\n")
-          Error(
-            "Several serial ports found:\n"
-            <> lines
-            <> "\nPass one with --port.",
-          )
-        }
-      }
-    }
+    "auto" -> resolve_auto(target)
     explicit -> Ok(explicit)
   }
+}
+
+fn resolve_auto(target: Target) -> Result(String, String) {
+  use serials <- result.try(usb_ports())
+  case target, serials {
+    _, [only] -> Ok(only.name)
+
+    Esp32, _ -> select_esp32_port()
+
+    Pico, [] ->
+      Error(
+        "No serial port found.\n"
+        <> "Hold BOOT, tap RESET, release BOOT, and try again.",
+      )
+
+    Pico, many -> select_pico_port(many)
+
+    Auto, [] ->
+      Error(
+        "No serial port found.\n"
+        <> "Hold BOOT, tap RESET, release BOOT, and try again.",
+      )
+
+    Auto, many ->
+      case esp32.list_devices() {
+        Ok([device]) -> Ok(device.port)
+        Ok([]) ->
+          Error(
+            "Several serial ports found:\n"
+            <> port_lines(many)
+            <> "\nPass a platform (esp32 or pico) or --port.",
+          )
+        Ok(_) -> Error("Several ESP32 devices found.\nPass one with --port.")
+        Error(esp32.ToolingMissing(reason)) -> Error(reason)
+        Error(esp32.DeviceError(reason)) -> Error(reason)
+      }
+  }
+}
+
+fn select_esp32_port() -> Result(String, String) {
+  esp32.select_port("auto")
+  |> result.map_error(fn(error) {
+    case error {
+      esp32.ToolingMissing(reason) -> reason
+      esp32.DeviceError(reason) -> reason
+    }
+  })
+}
+
+fn select_pico_port(serials: List(PortInfo)) -> Result(String, String) {
+  let esp_ports = case esp32.list_devices() {
+    Ok(devices) -> list.map(devices, fn(device) { device.port })
+    Error(_) -> []
+  }
+  let candidates =
+    list.filter(serials, fn(info) { !list.contains(esp_ports, info.name) })
+  case candidates {
+    [only] -> Ok(only.name)
+    [] ->
+      Error(
+        "No Pico serial port found.\n" <> "Unplug other boards, or pass --port.",
+      )
+    many ->
+      Error(
+        "Several serial ports found:\n"
+        <> port_lines(many)
+        <> "\nPass one with --port.",
+      )
+  }
+}
+
+fn port_lines(ports: List(PortInfo)) -> String {
+  ports
+  |> list.map(fn(info) { "  " <> info.name })
+  |> string.join("\n")
 }
 
 fn usb_ports() -> Result(List(PortInfo), String) {
@@ -155,7 +224,14 @@ fn console_loop(
         Bytes(data) -> {
           let #(text, next_pending) = utf8_feed(pending, data)
           let next_start = write_text(text, at_line_start)
-          console_loop(port, port_name, baud, deadline, next_start, next_pending)
+          console_loop(
+            port,
+            port_name,
+            baud,
+            deadline,
+            next_start,
+            next_pending,
+          )
         }
         TimedOut ->
           console_loop(port, port_name, baud, deadline, at_line_start, pending)

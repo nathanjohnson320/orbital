@@ -23,6 +23,7 @@ pub type Command {
     help: Bool,
   )
   Monitor(
+    platform: MonitorPlatform,
     port: Option(String),
     baud: Option(Int),
     timeout: Option(Int),
@@ -66,6 +67,14 @@ pub type Command {
   Expand(port: Option(String), help: Bool)
   EraseFlash(port: Option(String), help: Bool)
   Info(help: Bool)
+}
+
+/// Optional board family for `monitor`. Omitted (`Auto`) keeps single-port
+/// auto-detect and ESP32 probing when several USB serials are present.
+pub type MonitorPlatform {
+  MonitorAuto
+  MonitorEsp32
+  MonitorPico
 }
 
 /// `offset` is the flash address of `main.avm`. `None` means read that address
@@ -120,6 +129,7 @@ pub type CustomError {
 pub type Error {
   HoistError(state: ParsingState, error: hoist.ParseError(CustomError))
   InvalidFlashPlatform(platform: String)
+  InvalidMonitorPlatform(platform: String)
   MissingRequiredPositionalArgument(state: ParsingState, argument: String)
   MissingRequiredFlag(state: ParsingState, flag: String)
   InvalidFlagValue(
@@ -262,17 +272,32 @@ pub fn parse(args: List(String)) -> Result(Command, Error) {
         }
       }
 
-    Ok(hoist.Args(arguments: ["monitor"], flags:)) ->
-      case toggled(flags, "help") {
-        True ->
+    Ok(hoist.Args(arguments: ["monitor", ..rest], flags:)) ->
+      case toggled(flags, "help"), rest {
+        True, _ ->
           Ok(Monitor(
+            platform: MonitorAuto,
             port: None,
             baud: None,
             timeout: None,
             reset: True,
             help: True,
           ))
-        False -> {
+
+        False, [_, unknown, ..] ->
+          UnknownCommand(unknown)
+          |> hoist.CustomError
+          |> HoistError(state: ParsingMonitor)
+          |> Error
+
+        False, rest -> {
+          use platform <- result.try(case rest {
+            [] -> Ok(MonitorAuto)
+            ["esp32"] -> Ok(MonitorEsp32)
+            ["pico"] -> Ok(MonitorPico)
+            [platform] -> Error(InvalidMonitorPlatform(platform))
+            _ -> Error(InvalidMonitorPlatform(""))
+          })
           use baud <- optional_int_flag(flags, ParsingMonitor, "baud")
           use timeout <- optional_int_flag(flags, ParsingMonitor, "timeout")
           case baud, timeout {
@@ -292,6 +317,7 @@ pub fn parse(args: List(String)) -> Result(Command, Error) {
               ))
             _, _ ->
               Ok(Monitor(
+                platform:,
                 port: option.from_result(find_flag_value(flags, "port")),
                 baud:,
                 timeout:,
@@ -475,6 +501,8 @@ fn parse_args(
       "list", ParsingBase -> Ok(#(ParsingList, list_flags()))
       "uf2create", ParsingBase -> Ok(#(ParsingUf2create, uf2create_flags()))
       "monitor", ParsingBase -> Ok(#(ParsingMonitor, monitor_flags()))
+      "esp32", ParsingMonitor -> Ok(#(ParsingMonitor, monitor_flags()))
+      "pico", ParsingMonitor -> Ok(#(ParsingMonitor, monitor_flags()))
       "install", ParsingBase -> Ok(#(ParsingInstall, install_flags()))
       "esp32", ParsingInstall -> Ok(#(ParsingInstall, install_flags()))
       "pico", ParsingInstall -> Ok(#(ParsingInstallPico, pico_install_flags()))
@@ -498,7 +526,7 @@ fn parse_args(
       // The "uf2create" command accepts no subcommands
       _, ParsingUf2create -> Error(UnknownCommand(command:))
 
-      // The "monitor" command accepts no subcommands
+      // The "monitor" command takes optional esp32/pico platforms
       _, ParsingMonitor -> Error(UnknownCommand(command:))
 
       // The "install" command takes esp32/pico/wasm platforms
@@ -1119,7 +1147,10 @@ pub fn usage_text() -> Document {
     doc.line,
     command_line("  list         ", "list the contents of an 'avm' file"),
     doc.line,
-    command_line("  monitor      ", "show the console of an ESP32 board"),
+    command_line(
+      "  monitor      ",
+      "show the console of an ESP32 or Pico board",
+    ),
     doc.line,
     command_line("  install      ", "install AtomVM on ESP32, Pico, or WASM"),
     doc.line,
@@ -1369,21 +1400,33 @@ pub fn monitor_help_text(description: Bool) -> Document {
     case description {
       False -> doc.empty
       True ->
-        "Show what an ESP32 board writes on its serial port."
+        "Show what a board writes on its serial port."
         |> flex_text
         |> doc.append(doc.lines(2))
     },
     doc.from_string(
       ansi.magenta("Usage: ")
       <> ansi.green("gleam run -m orbital ")
-      <> "monitor <FLAGS>",
+      <> "monitor [PLATFORM] <FLAGS>",
+    ),
+    doc.lines(2),
+    doc.from_string(ansi.magenta("Platforms:")),
+    doc.line,
+    command_line(
+      "  esp32  ",
+      "probe for an ESP32 like flash (use when several USB serials are present)",
+    ),
+    doc.line,
+    command_line(
+      "  pico   ",
+      "pick a non-ESP32 USB serial (use when an ESP32 is also plugged in)",
     ),
     doc.lines(2),
     doc.from_string(ansi.magenta("Flags:")),
     doc.line,
     flag_line(
       "  -p, --port      <PATH>  ",
-      "serial port. Chosen automatically when only one board is connected",
+      "serial port. Chosen automatically when the board is obvious",
     ),
     doc.line,
     flag_line_with_default(
@@ -1756,6 +1799,19 @@ pub fn error_to_document(error: Error) -> Document {
         flex_text("'" <> platform <> "' is not a supported platform."),
         doc.lines(2),
         help_text_for_state(ParsingFlash),
+      ])
+
+    InvalidMonitorPlatform(platform:) ->
+      doc.concat([
+        error_heading("invalid platform"),
+        doc.line,
+        flex_text(
+          "'"
+          <> platform
+          <> "' is not a supported monitor platform. Use esp32 or pico.",
+        ),
+        doc.lines(2),
+        help_text_for_state(ParsingMonitor),
       ])
 
     ConflictingFlags(message:) ->

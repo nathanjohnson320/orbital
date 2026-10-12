@@ -72,8 +72,8 @@ pub fn main() -> Nil {
 
     Ok(cli.Monitor(help: True, ..)) ->
       print_document(cli.monitor_help_text(True))
-    Ok(cli.Monitor(port:, baud:, timeout:, reset:, help: False)) ->
-      monitor(port, baud, timeout, reset)
+    Ok(cli.Monitor(platform:, port:, baud:, timeout:, reset:, help: False)) ->
+      monitor(platform, port, baud, timeout, reset)
 
     Ok(cli.Install(help: True, ..)) ->
       print_document(cli.install_help_text(True))
@@ -272,15 +272,21 @@ fn run_wasm_install(options: wasm_install.Options) -> Nil {
 }
 
 fn monitor(
+  platform: cli.MonitorPlatform,
   port: Option(String),
   baud: Option(Int),
   timeout: Option(Int),
   reset: Bool,
 ) -> Nil {
+  let target = case platform {
+    cli.MonitorAuto -> monitor.Auto
+    cli.MonitorEsp32 -> monitor.Esp32
+    cli.MonitorPico -> monitor.Pico
+  }
   let port = option.unwrap(port, "auto")
   let baud = option.unwrap(baud, default_monitor_baud)
   let timeout = option.unwrap(timeout, default_monitor_timeout)
-  case monitor.run(port, baud, reset, timeout) {
+  case monitor.run(target, port, baud, reset, timeout) {
     Ok(Nil) ->
       case timeout {
         0 -> Nil
@@ -1137,7 +1143,8 @@ fn resolve_flash_address(
 }
 
 fn parse_flash_address(raw: String) -> Result(Int, Error) {
-  let digits = case string.starts_with(raw, "0x") || string.starts_with(raw, "0X")
+  let digits = case
+    string.starts_with(raw, "0x") || string.starts_with(raw, "0X")
   {
     True -> string.drop_start(raw, 2)
     False -> raw

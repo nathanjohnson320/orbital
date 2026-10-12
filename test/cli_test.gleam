@@ -1,8 +1,8 @@
 import gleam/option.{None, Some}
 import gleeunit
 import orbital/internal/cli.{
-  EraseFlash, Esp32, Expand, Flash, Info, InstallWasm, Monitor, Pico, Uf2create,
-  Wasm,
+  EraseFlash, Esp32, Expand, Flash, Info, InstallWasm, Monitor, MonitorAuto,
+  MonitorEsp32, MonitorPico, Pico, Uf2create, Wasm,
 }
 
 pub fn main() -> Nil {
@@ -38,18 +38,47 @@ pub fn esp32_flash_rejects_a_bad_offset_test() {
 }
 
 pub fn monitor_defaults_test() {
-  let assert Ok(Monitor(port:, baud:, timeout:, reset: True, help: False)) =
-    cli.parse(["monitor"])
+  let assert Ok(Monitor(
+    platform:,
+    port:,
+    baud:,
+    timeout:,
+    reset: True,
+    help: False,
+  )) = cli.parse(["monitor"])
 
+  assert platform == MonitorAuto
   assert port == None
   assert baud == None
   assert timeout == None
 }
 
+pub fn monitor_esp32_platform_test() {
+  let assert Ok(Monitor(platform: MonitorEsp32, help: False, ..)) =
+    cli.parse(["monitor", "esp32"])
+}
+
+pub fn monitor_pico_platform_test() {
+  let assert Ok(Monitor(platform: MonitorPico, help: False, ..)) =
+    cli.parse(["monitor", "pico"])
+}
+
+pub fn monitor_rejects_unknown_platform_test() {
+  let assert Error(_) = cli.parse(["monitor", "wasm"])
+}
+
 pub fn monitor_flags_test() {
-  let assert Ok(Monitor(port:, baud:, timeout:, reset: False, help: False)) =
+  let assert Ok(Monitor(
+    platform:,
+    port:,
+    baud:,
+    timeout:,
+    reset: False,
+    help: False,
+  )) =
     cli.parse([
       "monitor",
+      "pico",
       "--port",
       "/dev/ttyACM0",
       "--baud",
@@ -59,6 +88,7 @@ pub fn monitor_flags_test() {
       "--no-reset",
     ])
 
+  assert platform == MonitorPico
   assert port == Some("/dev/ttyACM0")
   assert baud == Some(9600)
   assert timeout == Some(0)
