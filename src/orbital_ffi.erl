@@ -12,7 +12,10 @@
     zip_get/2,
     uf2create/4,
     os_family/0,
-    wildcard/1
+    wildcard/1,
+    extract_supported_api/1,
+    beam_inspect/1,
+    otp_release/0
 ]).
 
 packbeam_create(OutputPath, StartModule, Files) ->
@@ -51,6 +54,149 @@ packbeam_list(InputPath) ->
     catch
         _ -> {error, nil}
     end.
+
+extract_supported_api(Archive) ->
+    try
+        {ok, Outer} = erl_tar:extract({binary, Archive}, [memory]),
+        {_, ContentsGzip} = lists:keyfind("contents.tar.gz", 1, Outer),
+        Contents = zlib:gunzip(ContentsGzip),
+        {ok, Inner} = erl_tar:extract({binary, Contents}, [memory]),
+        {_, Funcs} = lists:keyfind("priv/funcs.txt", 1, Inner),
+        {_, Instructions} = lists:keyfind("priv/instructions.txt", 1, Inner),
+        {_, Manifest} = lists:keyfind("priv/manifest.json", 1, Inner),
+        {ok, {Funcs, Instructions, Manifest}}
+    catch
+        Class:Reason ->
+            {error, unicode:characters_to_binary(
+                io_lib:format("~p:~p", [Class, Reason])
+            )}
+    end.
+
+otp_release() ->
+    list_to_binary(erlang:system_info(otp_release)).
+
+beam_inspect(Paths) ->
+    try
+        {ok, lists:map(fun inspect_beam/1, Paths)}
+    catch
+        Class:Reason ->
+            {error, unicode:characters_to_binary(
+                io_lib:format("~p:~p", [Class, Reason])
+            )}
+    end.
+
+inspect_beam(Path) ->
+    {beam_file, Module, Exports, _, _, Code} =
+        beam_disasm:file(unsafe_characters_to_list(Path)),
+    Functions = lists:filter(
+        fun({function, Name, _, _, _}) ->
+            not lists:prefix("MACRO-", atom_to_list(Name))
+        end,
+        Code
+    ),
+    ExportNames = lists:usort([
+        format_mfa(Module, Name, Arity)
+     || {Name, Arity, _} <- Exports
+    ]),
+    Labels = [
+        {Label, format_mfa(Module, Name, Arity)}
+     || {function, Name, Arity, Label, _} <- Functions
+    ],
+    FunctionInfos = [
+        inspect_function(Module, Function, Labels)
+     || Function <- Functions
+    ],
+    {beam_info, atom_to_binary(Module), ExportNames, FunctionInfos}.
+
+inspect_function(Module, {function, Name, Arity, _, _} = Function, Labels) ->
+    {function_info,
+        format_mfa(Module, Name, Arity),
+        lists:usort(function_calls(Function)),
+        lists:usort(function_local_calls(Function, Labels)),
+        lists:usort(function_instructions(Function))
+    }.
+
+function_calls({function, _, _, _, Instructions}) ->
+    lists:filtermap(fun
+        ({call_ext, _, {extfunc, Module, Function, Arity}}) ->
+            {true, format_mfa(Module, Function, Arity)};
+        ({call_ext_last, _, {extfunc, Module, Function, Arity}, _}) ->
+            {true, format_mfa(Module, Function, Arity)};
+        ({call_ext_only, _, {extfunc, Module, Function, Arity}}) ->
+            {true, format_mfa(Module, Function, Arity)};
+        ({bif, Function, _, Arguments, _}) ->
+            case bif_shaped_instruction(Function) of
+                true -> false;
+                false -> {true, format_mfa(erlang, Function, length(Arguments))}
+            end;
+        ({gc_bif, Function, _, _, Arguments, _}) ->
+            {true, format_mfa(erlang, Function, length(Arguments))};
+        (_) ->
+            false
+    end, Instructions).
+
+function_local_calls({function, _, _, _, Instructions}, Labels) ->
+    lists:filtermap(fun
+        ({call, _, Target}) -> local_call(Target, Labels);
+        ({call_last, _, Target, _}) -> local_call(Target, Labels);
+        ({call_only, _, Target}) -> local_call(Target, Labels);
+        ({make_fun2, Target, _, _, _}) -> local_call(Target, Labels);
+        ({make_fun3, Target, _, _, _}) -> local_call(Target, Labels);
+        ({make_fun3, Target, _, _, _, _}) -> local_call(Target, Labels);
+        (_) -> false
+    end, Instructions).
+
+local_call({f, Label}, Labels) ->
+    case lists:keyfind(Label, 1, Labels) of
+        {_, Name} -> {true, Name};
+        false -> false
+    end;
+local_call({Module, Function, Arity}, _Labels)
+        when is_atom(Module), is_atom(Function), is_integer(Arity) ->
+    {true, format_mfa(Module, Function, Arity)};
+local_call(_, _Labels) ->
+    false.
+
+function_instructions({function, _, _, _, Instructions}) ->
+    lists:map(fun
+        ({bif, Function, _, Arguments, _}) ->
+            case bif_shaped_instruction(Function) of
+                true -> atom_to_binary(Function);
+                false -> iolist_to_binary(["bif", integer_to_list(length(Arguments))])
+            end;
+        ({gc_bif, _, _, _, Arguments, _}) ->
+            iolist_to_binary(["gc_bif", integer_to_list(length(Arguments))]);
+        ({init, _}) ->
+            <<"kill">>;
+        (Instruction) when is_tuple(Instruction), element(1, Instruction) =:= test ->
+            atom_to_binary(normalize_test_name(element(2, Instruction)));
+        (Instruction) when is_tuple(Instruction) ->
+            atom_to_binary(element(1, Instruction));
+        (Instruction) when is_atom(Instruction) ->
+            atom_to_binary(Instruction)
+    end, Instructions).
+
+bif_shaped_instruction(fadd) -> true;
+bif_shaped_instruction(fsub) -> true;
+bif_shaped_instruction(fmul) -> true;
+bif_shaped_instruction(fdiv) -> true;
+bif_shaped_instruction(fnegate) -> true;
+bif_shaped_instruction(raise) -> true;
+bif_shaped_instruction(_) -> false.
+
+normalize_test_name(is_eq) -> is_equal;
+normalize_test_name(is_ne) -> is_not_equal;
+normalize_test_name(is_ne_exact) -> is_not_eq_exact;
+normalize_test_name(Name) -> Name.
+
+format_mfa(Module, Function, Arity) ->
+    iolist_to_binary([
+        atom_to_list(Module),
+        ":",
+        atom_to_list(Function),
+        "/",
+        integer_to_list(Arity)
+    ]).
 
 -spec run_executable(Name :: binary(), Directory :: binary(), Arguments :: list(binary())) -> {ok, integer()} | {error, nil}.
 run_executable(Name, Directory, Arguments) ->
@@ -244,3 +390,4 @@ unsafe_characters_to_binary(Name) ->
         Result when is_binary(Result) -> Result;
         Error -> throw({unsafe_characters_to_binary, Error})
     end.
+
