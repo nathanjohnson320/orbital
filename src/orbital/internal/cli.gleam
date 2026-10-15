@@ -1344,7 +1344,7 @@ pub fn flash_help_text(description: Bool) -> Document {
     flag_line(
       "  --supported-api <DIR>   ",
       "AtomVM funcs.txt, instructions.txt, and manifest.json directory "
-      <> "(or set ATOMVM_SUPPORTED_API)",
+        <> "(or set ATOMVM_SUPPORTED_API)",
     ),
     doc.line,
     flag_line("  -h, --help               ", "show this help text"),
@@ -1445,7 +1445,7 @@ pub fn build_help_text(description: Bool) -> Document {
     flag_line(
       "  --supported-api    <DIR>   ",
       "AtomVM funcs.txt, instructions.txt, and manifest.json directory "
-      <> "(or set ATOMVM_SUPPORTED_API)",
+        <> "(or set ATOMVM_SUPPORTED_API)",
     ),
     doc.line,
     flag_line("  -h, --help                 ", "show this help text"),
@@ -1482,7 +1482,7 @@ pub fn check_help_text(description: Bool) -> Document {
     flag_line(
       "  --supported-api  <DIR>  ",
       "AtomVM funcs.txt, instructions.txt, and manifest.json directory "
-      <> "(or set ATOMVM_SUPPORTED_API)",
+        <> "(or set ATOMVM_SUPPORTED_API)",
     ),
     doc.line,
     flag_line("  -h, --help              ", "show this help text"),

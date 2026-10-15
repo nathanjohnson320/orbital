@@ -25,7 +25,8 @@ import simplifile
 
 const atomvm_releases = "https://api.github.com/repos/atomvm/atomvm/releases"
 
-const factory_releases = "https://api.github.com/repos/atomvm/atomvm-esp32-firmware-factory/releases"
+const factory_releases =
+  "https://api.github.com/repos/atomvm/atomvm-esp32-firmware-factory/releases"
 
 const cache_dir_name = "firmware_images"
 
@@ -33,7 +34,8 @@ const build_images_dir = "_build/atomvm_images"
 
 const page_size = 10
 
-const user_agent = "orbital-firmware/1.0 (+https://github.com/nathanjohnson320/orbital)"
+const user_agent =
+  "orbital-firmware/1.0 (+https://github.com/nathanjohnson320/orbital)"
 
 pub type Section {
   Section(kind: String, title: String, images: List(Image))

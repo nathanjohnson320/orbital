@@ -77,7 +77,9 @@ pub fn compare(beams: List(BeamInfo), entrypoint: String, api: Api) -> Report {
   let instruction_pairs =
     list.flat_map(functions, fn(function) {
       function.instructions
-      |> list.filter(fn(instruction) { !set.contains(instructions, instruction) })
+      |> list.filter(fn(instruction) {
+        !set.contains(instructions, instruction)
+      })
       |> list.map(fn(instruction) { #(instruction, module_name(function.name)) })
     })
   Report(
