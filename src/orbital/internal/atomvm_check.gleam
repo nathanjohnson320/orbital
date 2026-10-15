@@ -1,6 +1,8 @@
 import filepath
+import gleam/dict
 import gleam/list
 import gleam/result
+import gleam/set
 import gleam/string
 import orbital/internal/supported_api.{type Api}
 
@@ -60,22 +62,22 @@ pub fn compare(beams: List(BeamInfo), entrypoint: String, api: Api) -> Report {
     beams
     |> list.flat_map(fn(beam) { beam.exports })
     |> list.append(api.funcs)
+    |> set.from_list
+  let instructions = set.from_list(api.instructions)
   let functions =
     beams
     |> list.flat_map(fn(beam) { beam.functions })
-    |> reachable([entrypoint], [])
+    |> reachable([entrypoint])
   let function_pairs =
     list.flat_map(functions, fn(function) {
       function.calls
-      |> list.filter(fn(call) { !list.contains(exports, call) })
+      |> list.filter(fn(call) { !set.contains(exports, call) })
       |> list.map(fn(call) { #(call, module_name(function.name)) })
     })
   let instruction_pairs =
     list.flat_map(functions, fn(function) {
       function.instructions
-      |> list.filter(fn(instruction) {
-        !list.contains(api.instructions, instruction)
-      })
+      |> list.filter(fn(instruction) { !set.contains(instructions, instruction) })
       |> list.map(fn(instruction) { #(instruction, module_name(function.name)) })
     })
   Report(
@@ -95,27 +97,39 @@ fn module_name(mfa: String) -> String {
 fn reachable(
   functions: List(FunctionInfo),
   pending: List(String),
-  visited: List(String),
+) -> List(FunctionInfo) {
+  let by_name =
+    list.fold(functions, dict.new(), fn(acc, function) {
+      dict.insert(acc, function.name, function)
+    })
+  do_reachable(by_name, pending, set.new(), [])
+}
+
+fn do_reachable(
+  by_name: dict.Dict(String, FunctionInfo),
+  pending: List(String),
+  visited: set.Set(String),
+  found: List(FunctionInfo),
 ) -> List(FunctionInfo) {
   case pending {
-    [] ->
-      list.filter(functions, fn(function) {
-        list.contains(visited, function.name)
-      })
+    [] -> found
     [name, ..rest] ->
-      case list.contains(visited, name) {
-        True -> reachable(functions, rest, visited)
-        False ->
-          case list.find(functions, fn(function) { function.name == name }) {
-            Error(_) -> reachable(functions, rest, [name, ..visited])
+      case set.contains(visited, name) {
+        True -> do_reachable(by_name, rest, visited, found)
+        False -> {
+          let visited = set.insert(visited, name)
+          case dict.get(by_name, name) {
+            Error(_) -> do_reachable(by_name, rest, visited, found)
             Ok(function) ->
-              reachable(
-                functions,
+              do_reachable(
+                by_name,
                 list.append(function.local_calls, function.calls)
                   |> list.append(rest),
-                [name, ..visited],
+                visited,
+                [function, ..found],
               )
           }
+        }
       }
   }
 }
@@ -128,8 +142,12 @@ fn select_beams(
   beam_files: List(String),
   packed_names: List(String),
 ) -> Result(List(String), Error) {
+  let by_name =
+    list.fold(beam_files, dict.new(), fn(acc, path) {
+      dict.insert(acc, filepath.base_name(path), path)
+    })
   list.try_map(packed_names, fn(name) {
-    case list.find(beam_files, fn(path) { filepath.base_name(path) == name }) {
+    case dict.get(by_name, name) {
       Ok(path) -> Ok(path)
       Error(_) -> Error(CannotMatchPackedModule(name))
     }
@@ -138,22 +156,25 @@ fn select_beams(
 
 fn group(pairs: List(#(String, String))) -> List(Finding) {
   pairs
-  |> list.map(fn(pair) { pair.0 })
-  |> list.unique
-  |> list.sort(by: string.compare)
-  |> list.map(fn(name) {
-    let modules =
-      pairs
-      |> list.filter_map(fn(pair) {
-        case pair.0 == name {
-          True -> Ok(pair.1)
-          False -> Error(Nil)
-        }
-      })
-      |> list.unique
-      |> list.sort(by: string.compare)
-    Finding(name:, used_by: modules)
+  |> list.fold(dict.new(), fn(acc, pair) {
+    let #(name, module) = pair
+    let modules = case dict.get(acc, name) {
+      Ok(existing) -> [module, ..existing]
+      Error(_) -> [module]
+    }
+    dict.insert(acc, name, modules)
   })
+  |> dict.to_list
+  |> list.map(fn(entry) {
+    let #(name, modules) = entry
+    Finding(
+      name:,
+      used_by: modules
+        |> list.unique
+        |> list.sort(by: string.compare),
+    )
+  })
+  |> list.sort(by: fn(a, b) { string.compare(a.name, b.name) })
 }
 
 pub fn format_report(report: Report, api: Api) -> String {
