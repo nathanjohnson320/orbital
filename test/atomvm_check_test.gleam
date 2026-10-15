@@ -99,6 +99,12 @@ pub fn beam_disassembler_extracts_external_calls_test() {
   let assert Ok(FunctionInfo(calls: closure_calls, ..)) =
     list.find(functions, fn(function) { function.name == closure_target })
   assert list.contains(closure_calls, "lists:reverse/1")
+
+  let assert Ok(FunctionInfo(calls: capture_calls, ..)) =
+    list.find(functions, fn(function) {
+      function.name == "beam_check_fixture:capture/0"
+    })
+  assert list.contains(capture_calls, "lists:reverse/1")
 }
 
 pub fn custom_supported_api_directory_loads_test() {

@@ -124,22 +124,6 @@ pub fn is_compatible(report: Report) -> Bool {
   report.missing_functions == [] && report.missing_instructions == []
 }
 
-pub fn format_report(report: Report, api: Api) -> String {
-  let functions =
-    format_findings(
-      "Functions not available on " <> supported_api.describe(api),
-      report.missing_functions,
-    )
-  let instructions =
-    format_findings(
-      "Instructions not implemented by " <> supported_api.describe(api),
-      report.missing_instructions,
-    )
-  [functions, instructions]
-  |> list.filter(fn(section) { section != "" })
-  |> string.join(with: "\n\n")
-}
-
 fn select_beams(
   beam_files: List(String),
   packed_names: List(String),
@@ -172,6 +156,26 @@ fn group(pairs: List(#(String, String))) -> List(Finding) {
   })
 }
 
+pub fn format_report(report: Report, api: Api) -> String {
+  let functions =
+    format_findings(
+      "Functions not available on " <> supported_api.describe(api),
+      report.missing_functions,
+    )
+  let instructions =
+    format_findings(
+      "Instructions not implemented by " <> supported_api.describe(api),
+      report.missing_instructions,
+    )
+  let body =
+    [functions, instructions]
+    |> list.filter(fn(section) { section != "" })
+    |> string.join(with: "\n\n")
+  body
+  <> "\n\nHint: use `--supported-api` or `ATOMVM_SUPPORTED_API` for custom firmware."
+  <> "\nStatic checks cannot see names built for dynamic `apply` calls."
+}
+
 fn format_findings(heading: String, findings: List(Finding)) -> String {
   case findings {
     [] -> ""
@@ -180,7 +184,7 @@ fn format_findings(heading: String, findings: List(Finding)) -> String {
         list.map(findings, fn(finding) {
           "* "
           <> finding.name
-          <> " (called by "
+          <> " (used by "
           <> string.join(finding.used_by, with: ", ")
           <> ")"
         })

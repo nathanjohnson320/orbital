@@ -1194,9 +1194,12 @@ pub fn usage_text() -> Document {
     doc.lines(2),
     doc.from_string(ansi.magenta("Commands:")),
     doc.line,
-    command_line("  build        ", "build your code into an 'avm' file"),
+    command_line(
+      "  build        ",
+      "build an 'avm' and check AtomVM compatibility",
+    ),
     doc.line,
-    command_line("  check        ", "check code against the AtomVM API"),
+    command_line("  check        ", "check AtomVM compatibility only"),
     doc.line,
     command_line("  flash        ", "build and flash your code to a device"),
     doc.line,
@@ -1232,7 +1235,8 @@ pub fn flash_help_text(description: Bool) -> Document {
     case description {
       False -> doc.empty
       True ->
-        "Build your project into an 'avm' file and flash it to the given device."
+        "Build your project into an 'avm' file, check AtomVM compatibility, "
+        <> "and flash it to the given device."
         |> flex_text
         |> doc.append(doc.lines(2))
     },
@@ -1337,7 +1341,8 @@ pub fn flash_help_text(description: Bool) -> Document {
     doc.line,
     flag_line(
       "  --supported-api <DIR>   ",
-      "AtomVM funcs.txt, instructions.txt, and manifest.json directory",
+      "AtomVM funcs.txt, instructions.txt, and manifest.json directory "
+      <> "(or set ATOMVM_SUPPORTED_API)",
     ),
     doc.line,
     flag_line("  -h, --help               ", "show this help text"),
@@ -1353,7 +1358,8 @@ pub fn uf2create_help_text(description: Bool) -> Document {
       True ->
         [
           flex_text(
-            "Build your project into an 'avm' file and convert it to a Pico UF2.",
+            "Build your project into an 'avm' file, check AtomVM compatibility, "
+            <> "and convert it to a Pico UF2.",
           ),
           doc.line,
           flex_text(
@@ -1390,7 +1396,10 @@ pub fn uf2create_help_text(description: Bool) -> Document {
       "universal",
     ),
     doc.line,
-    flag_line("  --supported-api    <DIR>   ", "AtomVM supported API directory"),
+    flag_line(
+      "  --supported-api    <DIR>   ",
+      "AtomVM funcs.txt, instructions.txt, and manifest.json directory",
+    ),
     doc.line,
     flag_line("  -h, --help                  ", "show this help text"),
   ]
@@ -1403,7 +1412,10 @@ pub fn build_help_text(description: Bool) -> Document {
       False -> doc.empty
       True ->
         [
-          flex_text("Build your project into an 'avm' file."),
+          flex_text(
+            "Build your project into an 'avm' file and check it against the "
+            <> "AtomVM supported API.",
+          ),
           doc.line,
           flex_text(
             "This is handy if you need to interact with the 'avm' file with "
@@ -1428,7 +1440,11 @@ pub fn build_help_text(description: Bool) -> Document {
       "\"name_of_your_project.avm\"",
     ),
     doc.line,
-    flag_line("  --supported-api    <DIR>   ", "AtomVM supported API directory"),
+    flag_line(
+      "  --supported-api    <DIR>   ",
+      "AtomVM funcs.txt, instructions.txt, and manifest.json directory "
+      <> "(or set ATOMVM_SUPPORTED_API)",
+    ),
     doc.line,
     flag_line("  -h, --help                 ", "show this help text"),
   ]
@@ -1440,8 +1456,17 @@ pub fn check_help_text(description: Bool) -> Document {
     case description {
       False -> doc.empty
       True ->
-        "Compile and check your project against the supported AtomVM API."
-        |> flex_text
+        [
+          flex_text(
+            "Compile and check your project against the supported AtomVM API "
+            <> "without keeping an '.avm' file.",
+          ),
+          doc.line,
+          flex_text(
+            "`build`, `flash`, and `uf2create` run this check automatically.",
+          ),
+        ]
+        |> doc.concat
         |> doc.append(doc.lines(2))
     },
     doc.from_string(
@@ -1454,7 +1479,8 @@ pub fn check_help_text(description: Bool) -> Document {
     doc.line,
     flag_line(
       "  --supported-api  <DIR>  ",
-      "AtomVM funcs.txt, instructions.txt, and manifest.json directory",
+      "AtomVM funcs.txt, instructions.txt, and manifest.json directory "
+      <> "(or set ATOMVM_SUPPORTED_API)",
     ),
     doc.line,
     flag_line("  -h, --help              ", "show this help text"),

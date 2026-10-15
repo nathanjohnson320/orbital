@@ -6,6 +6,7 @@ import gleam/dynamic/decode
 import gleam/http/request
 import gleam/httpc
 import gleam/int
+import gleam/io
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
@@ -62,6 +63,7 @@ pub fn resolve(override: Option(String)) -> Result(Api, Error) {
     Some(directory) -> load(directory, Override)
     None ->
       case envoy.get("ATOMVM_SUPPORTED_API") {
+        Ok("") -> resolve_official()
         Ok(directory) -> load(directory, Environment)
         Error(_) -> resolve_official()
       }
@@ -148,7 +150,22 @@ fn download_official(directory: String) -> Result(Api, Error) {
     filepath.join(directory, "manifest.json"),
     manifest,
   ))
-  load(directory, Official)
+  use api <- result.try(load(directory, Official))
+  case simplifile.read(".gitignore") {
+    Ok(text) ->
+      case string.contains(text, "firmware_images") {
+        True -> Nil
+        False ->
+          io.println(
+            "Tip: add /firmware_images/ to .gitignore so cached supported APIs stay local.",
+          )
+      }
+    Error(_) ->
+      io.println(
+        "Tip: add /firmware_images/ to .gitignore so cached supported APIs stay local.",
+      )
+  }
+  Ok(api)
 }
 
 pub fn load(directory: String, source: Source) -> Result(Api, Error) {

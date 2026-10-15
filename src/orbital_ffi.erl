@@ -124,6 +124,17 @@ function_calls({function, _, _, _, Instructions}) ->
             {true, format_mfa(Module, Function, Arity)};
         ({call_ext_only, _, {extfunc, Module, Function, Arity}}) ->
             {true, format_mfa(Module, Function, Arity)};
+        %% Captured `fun Mod:Fun/Arity` never becomes call_ext; treat the MFA as
+        %% a dependency so builtins are checked against the supported API.
+        ({make_fun2, {Module, Function, Arity}, _, _, _})
+                when is_atom(Module), is_atom(Function), is_integer(Arity) ->
+            {true, format_mfa(Module, Function, Arity)};
+        ({make_fun3, {Module, Function, Arity}, _, _, _})
+                when is_atom(Module), is_atom(Function), is_integer(Arity) ->
+            {true, format_mfa(Module, Function, Arity)};
+        ({make_fun3, {Module, Function, Arity}, _, _, _, _})
+                when is_atom(Module), is_atom(Function), is_integer(Arity) ->
+            {true, format_mfa(Module, Function, Arity)};
         ({bif, Function, _, Arguments, _}) ->
             case bif_shaped_instruction(Function) of
                 true -> false;
