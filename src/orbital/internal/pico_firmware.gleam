@@ -25,7 +25,8 @@ const cache_dir_name = "firmware_images"
 
 const page_size = 15
 
-const user_agent = "orbital-firmware/1.0 (+https://github.com/nathanjohnson320/orbital)"
+const user_agent =
+  "orbital-firmware/1.0 (+https://github.com/nathanjohnson320/orbital)"
 
 pub type Board {
   Pico

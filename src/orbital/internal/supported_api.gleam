@@ -16,11 +16,13 @@ import simplifile
 
 pub const default_version = "0.7.0-beta.0"
 
-const default_checksum = "2244e40b11ba1231afed7c94c6ff158a6d394b72a4715fa313b941904ab8dc43"
+const default_checksum =
+  "2244e40b11ba1231afed7c94c6ff158a6d394b72a4715fa313b941904ab8dc43"
 
 const cache_root = "firmware_images/supported_api"
 
-const user_agent = "orbital-supported-api/1.0 (+https://github.com/nathanjohnson320/orbital)"
+const user_agent =
+  "orbital-supported-api/1.0 (+https://github.com/nathanjohnson320/orbital)"
 
 pub type Source {
   Override

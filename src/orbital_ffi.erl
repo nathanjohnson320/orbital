@@ -117,34 +117,53 @@ inspect_function(Module, {function, Name, Arity, _, _} = Function, Labels) ->
     }.
 
 function_calls({function, _, _, _, Instructions}) ->
-    lists:filtermap(fun
-        ({call_ext, _, {extfunc, Module, Function, Arity}}) ->
-            {true, format_mfa(Module, Function, Arity)};
-        ({call_ext_last, _, {extfunc, Module, Function, Arity}, _}) ->
-            {true, format_mfa(Module, Function, Arity)};
-        ({call_ext_only, _, {extfunc, Module, Function, Arity}}) ->
-            {true, format_mfa(Module, Function, Arity)};
-        %% Captured `fun Mod:Fun/Arity` never becomes call_ext; treat the MFA as
-        %% a dependency so builtins are checked against the supported API.
-        ({make_fun2, {Module, Function, Arity}, _, _, _})
-                when is_atom(Module), is_atom(Function), is_integer(Arity) ->
-            {true, format_mfa(Module, Function, Arity)};
-        ({make_fun3, {Module, Function, Arity}, _, _, _})
-                when is_atom(Module), is_atom(Function), is_integer(Arity) ->
-            {true, format_mfa(Module, Function, Arity)};
-        ({make_fun3, {Module, Function, Arity}, _, _, _, _})
-                when is_atom(Module), is_atom(Function), is_integer(Arity) ->
-            {true, format_mfa(Module, Function, Arity)};
-        ({bif, Function, _, Arguments, _}) ->
-            case bif_shaped_instruction(Function) of
-                true -> false;
-                false -> {true, format_mfa(erlang, Function, length(Arguments))}
-            end;
-        ({gc_bif, Function, _, _, Arguments, _}) ->
-            {true, format_mfa(erlang, Function, length(Arguments))};
-        (_) ->
-            false
-    end, Instructions).
+    lists:flatmap(fun instruction_calls/1, Instructions).
+
+instruction_calls({call_ext, _, {extfunc, Module, Function, Arity}}) ->
+    [format_mfa(Module, Function, Arity)];
+instruction_calls({call_ext_last, _, {extfunc, Module, Function, Arity}, _}) ->
+    [format_mfa(Module, Function, Arity)];
+instruction_calls({call_ext_only, _, {extfunc, Module, Function, Arity}}) ->
+    [format_mfa(Module, Function, Arity)];
+%% Captured `fun Mod:Fun/Arity` never becomes call_ext; treat the MFA as
+%% a dependency so builtins are checked against the supported API.
+%% Older compilers emit make_fun2/make_fun3; OTP 28+ (and Gleam 1.19's
+%% abstract-form codegen) often emit `{move,{literal,fun M:F/A},_}` instead.
+instruction_calls({make_fun2, {Module, Function, Arity}, _, _, _})
+        when is_atom(Module), is_atom(Function), is_integer(Arity) ->
+    [format_mfa(Module, Function, Arity)];
+instruction_calls({make_fun3, {Module, Function, Arity}, _, _, _})
+        when is_atom(Module), is_atom(Function), is_integer(Arity) ->
+    [format_mfa(Module, Function, Arity)];
+instruction_calls({make_fun3, {Module, Function, Arity}, _, _, _, _})
+        when is_atom(Module), is_atom(Function), is_integer(Arity) ->
+    [format_mfa(Module, Function, Arity)];
+instruction_calls({bif, Function, _, Arguments, _}) ->
+    case bif_shaped_instruction(Function) of
+        true -> [];
+        false -> [format_mfa(erlang, Function, length(Arguments))]
+    end;
+instruction_calls({gc_bif, Function, _, _, Arguments, _}) ->
+    [format_mfa(erlang, Function, length(Arguments))];
+instruction_calls(Instruction) ->
+    literal_fun_calls(Instruction).
+
+literal_fun_calls(Term) when is_function(Term) ->
+    case erlang:fun_info(Term, type) of
+        {type, external} ->
+            {module, Module} = erlang:fun_info(Term, module),
+            {name, Function} = erlang:fun_info(Term, name),
+            {arity, Arity} = erlang:fun_info(Term, arity),
+            [format_mfa(Module, Function, Arity)];
+        _ ->
+            []
+    end;
+literal_fun_calls(Term) when is_tuple(Term) ->
+    lists:flatmap(fun literal_fun_calls/1, tuple_to_list(Term));
+literal_fun_calls(Term) when is_list(Term) ->
+    lists:flatmap(fun literal_fun_calls/1, Term);
+literal_fun_calls(_) ->
+    [].
 
 function_local_calls({function, _, _, _, Instructions}, Labels) ->
     lists:filtermap(fun
