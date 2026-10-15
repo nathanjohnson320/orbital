@@ -1235,8 +1235,10 @@ pub fn flash_help_text(description: Bool) -> Document {
     case description {
       False -> doc.empty
       True ->
-        "Build your project into an 'avm' file, check AtomVM compatibility, "
-        <> "and flash it to the given device."
+        {
+          "Build your project into an 'avm' file, check AtomVM compatibility, "
+          <> "and flash it to the given device."
+        }
         |> flex_text
         |> doc.append(doc.lines(2))
     },
