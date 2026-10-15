@@ -6,7 +6,7 @@
   emitted as `{move,{literal,fun Mod:Fun/Arity},_}` instead of only
   `make_fun2` / `make_fun3`. Without this, `check` (and post-`build` checks)
   could miss function-capture dependencies against the AtomVM supported API.
-- Tooling pin and CI updated to Gleam 1.19.1.
+- Tooling pin and CI updated to Gleam 1.19.2.
 - Added automatic AtomVM compatibility checks to `build`, `flash`, and
   `uf2create`, plus an explicit `check` command. Orbital inspects external calls
   and BEAM instructions in the modules retained by PackBEAM against the pinned,
