@@ -11,6 +11,7 @@ import gleam/package_interface
 import gleam/result
 import gleam/string
 import gleam_community/ansi
+import orbital/internal/atomvm_check
 import orbital/internal/cli
 import orbital/internal/esp32
 import orbital/internal/executable.{type ExecutablePath}
@@ -23,6 +24,7 @@ import orbital/internal/pico_install
 import orbital/internal/project.{
   type Project, CannotParseGleamToml, CannotReadGleamToml, CannotReadProjectName,
 }
+import orbital/internal/supported_api
 import orbital/internal/wasm
 import orbital/internal/wasm_install
 import simplifile.{Enoent}
@@ -61,14 +63,22 @@ pub fn main() -> Nil {
     Ok(cli.Version) -> io.println(cli.orbital_version)
 
     Ok(cli.Build(help: True, ..)) -> print_document(cli.build_help_text(True))
-    Ok(cli.Build(output_file:, help: False)) -> build(output_file)
+    Ok(cli.Build(output_file:, supported_api:, help: False)) ->
+      build(output_file, supported_api)
+    Ok(cli.Check(help: True, ..)) -> print_document(cli.check_help_text(True))
+    Ok(cli.Check(supported_api:, help: False)) -> check(supported_api)
     Ok(cli.List(help: True, ..)) -> print_document(cli.list_help_text(True))
     Ok(cli.List(input_file:, help: False)) -> list(input_file)
 
     Ok(cli.Uf2create(help: True, ..)) ->
       print_document(cli.uf2create_help_text(True))
-    Ok(cli.Uf2create(output_file:, app_start:, family_id:, help: False)) ->
-      uf2create(output_file, app_start, family_id)
+    Ok(cli.Uf2create(
+      output_file:,
+      app_start:,
+      family_id:,
+      supported_api:,
+      help: False,
+    )) -> uf2create(output_file, app_start, family_id, supported_api)
 
     Ok(cli.Monitor(help: True, ..)) ->
       print_document(cli.monitor_help_text(True))
@@ -167,25 +177,41 @@ pub fn main() -> Nil {
 
 fn flash(platform: cli.FlashPlatform) -> Nil {
   let flashed_device = case platform {
-    cli.Esp32(port:, baud:, offset:, dry_run: True) -> {
+    cli.Esp32(port:, baud:, offset:, dry_run: True, ..) -> {
       flash_esp32_dry_run(port, baud, offset)
       Ok(False)
     }
-    cli.Esp32(port:, baud:, offset:, dry_run: False) -> {
-      use _ <- result.try(do_flash_esp32(port, baud, offset))
+    cli.Esp32(port:, baud:, offset:, dry_run: False, supported_api: api) -> {
+      use _ <- result.try(do_flash_esp32(port, baud, offset, api))
       Ok(True)
     }
-    cli.Pico(pico_path:, pico_reset:, picotool:, app_start:, family_id:) -> {
+    cli.Pico(
+      pico_path:,
+      pico_reset:,
+      picotool:,
+      app_start:,
+      family_id:,
+      supported_api: api,
+    ) -> {
       use _ <- result.try(do_flash_pico(
         pico_path:,
         pico_reset:,
         picotool:,
         app_start:,
         family_id:,
+        supported_api: api,
       ))
       Ok(True)
     }
-    cli.Wasm(env:, image:, version:, repo:, output_dir:, atomvmlib:) -> {
+    cli.Wasm(
+      env:,
+      image:,
+      version:,
+      repo:,
+      output_dir:,
+      atomvmlib:,
+      supported_api: api,
+    ) -> {
       use outcome <- result.try(do_flash_wasm(
         env:,
         image:,
@@ -193,6 +219,7 @@ fn flash(platform: cli.FlashPlatform) -> Nil {
         repo:,
         output_dir:,
         atomvmlib:,
+        supported_api: api,
       ))
       Ok(outcome)
     }
@@ -526,8 +553,8 @@ fn info() -> Nil {
   }
 }
 
-fn build(output_file: Option(String)) -> Nil {
-  case do_build(output_file) {
+fn build(output_file: Option(String), supported_api: Option(String)) -> Nil {
+  case do_build(output_file, supported_api) {
     Ok(output_path) -> {
       let output_path = string.remove_prefix(output_path, "./")
       io.println(ansi.magenta(
@@ -541,12 +568,30 @@ fn build(output_file: Option(String)) -> Nil {
   }
 }
 
+fn check(api_override: Option(String)) -> Nil {
+  case do_check(api_override) {
+    Ok(report) ->
+      io.println(ansi.magenta(
+        "⚛️  compatible with "
+        <> supported_api.describe(report.1)
+        <> " ("
+        <> int.to_string(report.0.checked_modules)
+        <> " modules checked)!",
+      ))
+    Error(error) -> {
+      io.println(error_to_string(error))
+      exit(1)
+    }
+  }
+}
+
 fn uf2create(
   output_file: Option(String),
   app_start: Option(String),
   family_id: Option(String),
+  supported_api: Option(String),
 ) -> Nil {
-  case do_uf2create(output_file, app_start, family_id) {
+  case do_uf2create(output_file, app_start, family_id, supported_api) {
     Ok(output_path) -> {
       let output_path = string.remove_prefix(output_path, "./")
       io.println(ansi.magenta(
@@ -574,6 +619,7 @@ fn do_flash_esp32(
   port: Option(String),
   baud: Option(Int),
   offset: Option(String),
+  supported_api: Option(String),
 ) -> Result(Nil, Error) {
   let baud = option.unwrap(baud, default_baud)
   let port = esp32.port_or_auto(port)
@@ -584,7 +630,7 @@ fn do_flash_esp32(
   let outcome = {
     use directory <- temporary.create(temporary.directory())
     let output_path = filepath.join(directory, "build.avm")
-    use output_path <- result.try(do_build(Some(output_path)))
+    use output_path <- result.try(do_build(Some(output_path), supported_api))
     use address <- result.try(resolve_flash_address(
       directory,
       resolved_port,
@@ -616,6 +662,7 @@ fn do_flash_pico(
   picotool picotool: Option(String),
   app_start app_start: Option(String),
   family_id family_id: Option(String),
+  supported_api supported_api: Option(String),
 ) -> Result(Nil, Error) {
   use project <- result.try(
     project.load()
@@ -625,7 +672,7 @@ fn do_flash_pico(
     use directory <- temporary.create(temporary.directory())
     let avm_path = filepath.join(directory, "build.avm")
     let uf2_path = filepath.join(directory, project.name <> ".uf2")
-    use _ <- result.try(do_build(Some(avm_path)))
+    use _ <- result.try(do_build(Some(avm_path), supported_api))
 
     use Nil <- try_step("Creating the UF2 file...", fn() {
       pico.create_uf2(
@@ -663,11 +710,12 @@ fn do_flash_wasm(
   repo repo: Option(String),
   output_dir output_dir: Option(String),
   atomvmlib atomvmlib: Option(String),
+  supported_api supported_api: Option(String),
 ) -> Result(Bool, Error) {
   let outcome = {
     use directory <- temporary.create(temporary.directory())
     let avm_path = filepath.join(directory, "build.avm")
-    use avm_path <- result.try(do_build(Some(avm_path)))
+    use avm_path <- result.try(do_build(Some(avm_path), supported_api))
     use Nil <- try_step("Deploying to AtomVM WASM...", fn() {
       wasm.flash(
         avm_path,
@@ -697,13 +745,14 @@ fn do_uf2create(
   output_file: Option(String),
   app_start: Option(String),
   family_id: Option(String),
+  supported_api: Option(String),
 ) -> Result(String, Error) {
   use project <- result.try(
     project.load()
     |> result.map_error(CannotIdentifyProject),
   )
   let avm_path = default_avm_file_name(project)
-  use _ <- result.try(do_build(Some(avm_path)))
+  use _ <- result.try(do_build(Some(avm_path), supported_api))
 
   let uf2_path = option.unwrap(output_file, default_uf2_file_name(project))
   use Nil <- try_step("Creating the UF2 file...", fn() {
@@ -718,7 +767,10 @@ fn do_uf2create(
 }
 
 /// Returns the path to the built file!
-fn do_build(output_file: Option(String)) -> Result(String, Error) {
+fn do_build(
+  output_file: Option(String),
+  supported_api: Option(String),
+) -> Result(String, Error) {
   // In order to do anything useful we need to make sure Gleam is installed
   // (we'll need to run it to compile the project), and that we're inside a
   // Gleam project.
@@ -747,15 +799,105 @@ fn do_build(output_file: Option(String)) -> Result(String, Error) {
     validate_entrypoint(gleam, project)
   })
 
-  // If the root project was compiled successufully we're good to go: we can
-  // now pack all the produced `.beam` files into an `.avm` file ready to be
-  // flushed into the device.
   let output_path = option.unwrap(output_file, default_avm_file_name(project))
-  use Nil <- try_step("Building the 'avm' file...", fn() {
-    bundle_beam_files(project, output_path)
+  use _ <- try_step("Building and checking the 'avm' file...", fn() {
+    let outcome = {
+      use directory <- temporary.create(temporary.directory())
+      let staging = filepath.join(directory, project.name <> ".avm")
+      use checked <- result.try(package_and_check(
+        project,
+        staging,
+        supported_api,
+      ))
+      use Nil <- result.try(
+        simplifile.copy(src: staging, dest: output_path)
+        |> result.map_error(fn(_) { CannotWriteAvmFile(output_path) }),
+      )
+      Ok(checked)
+    }
+    case outcome {
+      Ok(result) -> result
+      Error(_) -> Error(CannotWriteAvmFile(output_path))
+    }
   })
 
   Ok(output_path)
+}
+
+fn do_check(
+  api_override: Option(String),
+) -> Result(#(atomvm_check.Report, supported_api.Api), Error) {
+  use gleam <- result.try(
+    executable.find("gleam")
+    |> result.replace_error(CannotFindGleamExecutable),
+  )
+  use project <- result.try(
+    project.load()
+    |> result.map_error(CannotIdentifyProject),
+  )
+  use Nil <- try_step("Compiling your Gleam project...", fn() {
+    compile(gleam, project)
+  })
+  use Nil <- try_step("Looking for a suitable entrypoint...", fn() {
+    validate_entrypoint(gleam, project)
+  })
+  use checked <- try_step("Checking AtomVM compatibility...", fn() {
+    let outcome = {
+      use directory <- temporary.create(temporary.directory())
+      let staging = filepath.join(directory, project.name <> ".avm")
+      package_and_check(project, staging, api_override)
+    }
+    case outcome {
+      Ok(result) -> result
+      Error(_) -> Error(CannotWriteAvmFile("temporary check archive"))
+    }
+  })
+  Ok(checked)
+}
+
+fn package_and_check(
+  project: Project,
+  avm_path: String,
+  api_override: Option(String),
+) -> Result(#(atomvm_check.Report, supported_api.Api), Error) {
+  use beam_files <- result.try(
+    list_beam_files(project)
+    |> result.map_error(CannotListBeamFiles),
+  )
+  use Nil <- result.try(packbeam_create(
+    output_path: avm_path,
+    start_module: project.name,
+    beam_files:,
+  ))
+  use packed_names <- result.try(
+    packbeam_list(avm_path)
+    |> result.replace_error(CannotReadAvmFile(avm_path)),
+  )
+  let packed_beams =
+    list.filter(packed_names, fn(name) {
+      filepath.extension(name) == Ok("beam")
+    })
+  use api <- result.try(
+    supported_api.resolve(api_override)
+    |> result.map_error(SupportedApiError),
+  )
+  use Nil <- result.try(
+    supported_api.check_otp(api)
+    |> result.map_error(SupportedApiError),
+  )
+  use report <- result.try(
+    atomvm_check.inspect(
+      beam_files,
+      packed_beams,
+      project.name <> ":start/0",
+      api,
+    )
+    |> result.map_error(BeamCheckError),
+  )
+  case atomvm_check.is_compatible(report) {
+    True -> Ok(#(report, api))
+    False -> Error(Incompatible(report, api))
+  }
 }
 
 /// Given a project, this returns the default name used by the tool to put the
@@ -803,8 +945,12 @@ type Error {
   CannotCompileProject
   CannotListBeamFiles(reason: simplifile.FileError)
   OutputFileIsDirectory(file: String)
+  CannotWriteAvmFile(file: String)
 
   CannotReadAvmFile(file: String)
+  SupportedApiError(reason: supported_api.Error)
+  BeamCheckError(reason: atomvm_check.Error)
+  Incompatible(report: atomvm_check.Report, api: supported_api.Api)
 
   CannotReadPackageInterface(reason: simplifile.FileError)
   CannotParsePackageInterface(reason: json.DecodeError)
@@ -849,7 +995,11 @@ fn error_to_string(error: Error) -> String {
     | ExpandStagingFailed
     | ExpandVerificationFailed -> "cannot expand main.avm"
     OutputFileIsDirectory(_) -> "invalid output file"
+    CannotWriteAvmFile(_) -> "cannot write the 'avm' file"
     CannotReadAvmFile(_) -> "cannot read the 'avm' file"
+    SupportedApiError(_) -> "cannot load AtomVM supported API"
+    BeamCheckError(_) -> "cannot inspect compiled BEAM files"
+    Incompatible(_, _) -> "AtomVM compatibility check failed"
 
     // Unusual errors that should never happen, I'm not fretting over a perfect
     // name here.
@@ -947,8 +1097,21 @@ fn error_to_string(error: Error) -> String {
       <> "' is an existing directory.\n"
       <> "Hint: pick a different name for your output file."
 
+    CannotWriteAvmFile(file:) ->
+      "I couldn't write the checked application to `" <> file <> "`."
+
     CannotReadAvmFile(file:) ->
       "Make sure that `" <> file <> "` exists and is a valid 'avm' file."
+
+    SupportedApiError(reason:) -> supported_api_error_message(reason)
+
+    BeamCheckError(atomvm_check.CannotInspect(reason)) -> reason
+    BeamCheckError(atomvm_check.CannotMatchPackedModule(name)) ->
+      "PackBEAM retained `"
+      <> name
+      <> "`, but its compiled BEAM file was not found."
+
+    Incompatible(report:, api:) -> atomvm_check.format_report(report, api)
 
     // We're modelling these errors, but they should technically never happen
     // (so I'm not fretting over perfect error messages): one woulnd't even be
@@ -985,6 +1148,46 @@ fn error_to_string(error: Error) -> String {
   }
 
   error_heading(title) <> "\n" <> body
+}
+
+fn supported_api_error_message(error: supported_api.Error) -> String {
+  case error {
+    supported_api.CannotRead(path) ->
+      "Could not read the supported API file `" <> path <> "`."
+    supported_api.InvalidManifest(path) ->
+      "The supported API manifest at `" <> path <> "` is invalid."
+    supported_api.InvalidArchive(reason) ->
+      "The AtomVM Hex archive does not contain a valid supported API: "
+      <> reason
+    supported_api.Network(reason) -> reason
+    supported_api.ChecksumMismatch(expected:, actual:) ->
+      "The AtomVM Hex archive checksum was "
+      <> actual
+      <> ", expected "
+      <> expected
+      <> "."
+    supported_api.UnsupportedRelease(expected:, published:) ->
+      "Hex published checksum "
+      <> published
+      <> ", but Orbital pins "
+      <> expected
+      <> "."
+    supported_api.UnsupportedOtp(release:, supported:, version:) -> {
+      let supported =
+        supported
+        |> list.map(int.to_string)
+        |> string.join(with: ", ")
+      "This project was compiled with Erlang/OTP "
+      <> int.to_string(release)
+      <> ", but AtomVM "
+      <> version
+      <> " supports OTP "
+      <> supported
+      <> "."
+    }
+    supported_api.CannotWrite(path) ->
+      "Could not cache the supported API file `" <> path <> "`."
+  }
 }
 
 fn expand_partition_error_message(reason: partition.Error) -> String {
@@ -1086,20 +1289,6 @@ fn validate_entrypoint(
     Ok(result) -> result
     Error(error) -> Error(CannotReadPackageInterface(error))
   }
-}
-
-/// Bundles all the `.beam` files of the project into a single `.avm` file
-/// located at the given path.
-///
-fn bundle_beam_files(
-  project: Project,
-  output_path: String,
-) -> Result(Nil, Error) {
-  use beam_files <- result.try(
-    list_beam_files(project)
-    |> result.map_error(CannotListBeamFiles),
-  )
-  packbeam_create(output_path:, start_module: project.name, beam_files:)
 }
 
 /// Lists all the `.beam` files under the given project's build directory.

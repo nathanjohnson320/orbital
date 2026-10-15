@@ -1,18 +1,32 @@
 import gleam/option.{None, Some}
 import gleeunit
 import orbital/internal/cli.{
-  EraseFlash, Esp32, Expand, Flash, Info, InstallWasm, Monitor, MonitorAuto,
-  MonitorEsp32, MonitorPico, Pico, Uf2create, Wasm,
+  Build, Check, EraseFlash, Esp32, Expand, Flash, Info, InstallWasm, Monitor,
+  MonitorAuto, MonitorEsp32, MonitorPico, Pico, Uf2create, Wasm,
 }
 
 pub fn main() -> Nil {
   gleeunit.main()
 }
 
+pub fn check_defaults_test() {
+  let assert Ok(Check(supported_api: None, help: False)) = cli.parse(["check"])
+}
+
+pub fn check_accepts_supported_api_test() {
+  let assert Ok(Check(supported_api: Some("api"), help: False)) =
+    cli.parse(["check", "--supported-api", "api"])
+}
+
+pub fn build_accepts_supported_api_test() {
+  let assert Ok(Build(supported_api: Some("api"), help: False, ..)) =
+    cli.parse(["build", "--supported-api", "api"])
+}
+
 pub fn esp32_flash_starts_at_the_current_partition_test() {
   let assert Ok(Flash(platform:, help: False)) = cli.parse(["flash", "esp32"])
 
-  let assert Esp32(port:, baud:, offset:, dry_run:) = platform
+  let assert Esp32(port:, baud:, offset:, dry_run:, ..) = platform
   assert port == None
   assert baud == None
   assert offset == None
@@ -140,8 +154,14 @@ pub fn erase_flash_help_test() {
 pub fn pico_flash_defaults_test() {
   let assert Ok(Flash(platform:, help: False)) = cli.parse(["flash", "pico"])
 
-  let assert Pico(pico_path:, pico_reset:, picotool:, app_start:, family_id:) =
-    platform
+  let assert Pico(
+    pico_path:,
+    pico_reset:,
+    picotool:,
+    app_start:,
+    family_id:,
+    ..,
+  ) = platform
   assert pico_path == None
   assert pico_reset == None
   assert picotool == None
@@ -151,7 +171,14 @@ pub fn pico_flash_defaults_test() {
 
 pub fn pico_flash_flags_test() {
   let assert Ok(Flash(
-    platform: Pico(pico_path:, pico_reset:, picotool:, app_start:, family_id:),
+    platform: Pico(
+      pico_path:,
+      pico_reset:,
+      picotool:,
+      app_start:,
+      family_id:,
+      ..,
+    ),
     help: False,
   )) =
     cli.parse([
@@ -185,7 +212,7 @@ pub fn pico_flash_rejects_bad_app_start_test() {
 }
 
 pub fn uf2create_defaults_test() {
-  let assert Ok(Uf2create(output_file:, app_start:, family_id:, help: False)) =
+  let assert Ok(Uf2create(output_file:, app_start:, family_id:, help: False, ..)) =
     cli.parse(["uf2create"])
 
   assert output_file == None
@@ -194,7 +221,7 @@ pub fn uf2create_defaults_test() {
 }
 
 pub fn uf2create_flags_test() {
-  let assert Ok(Uf2create(output_file:, app_start:, family_id:, help: False)) =
+  let assert Ok(Uf2create(output_file:, app_start:, family_id:, help: False, ..)) =
     cli.parse([
       "uf2create",
       "--output-file",
@@ -217,7 +244,7 @@ pub fn uf2create_help_test() {
 pub fn wasm_flash_defaults_test() {
   let assert Ok(Flash(platform:, help: False)) = cli.parse(["flash", "wasm"])
 
-  let assert Wasm(env:, image:, version:, repo:, output_dir:, atomvmlib:) =
+  let assert Wasm(env:, image:, version:, repo:, output_dir:, atomvmlib:, ..) =
     platform
   assert env == None
   assert image == None
@@ -229,7 +256,7 @@ pub fn wasm_flash_defaults_test() {
 
 pub fn wasm_flash_flags_test() {
   let assert Ok(Flash(
-    platform: Wasm(env:, image:, version:, repo:, output_dir:, atomvmlib:),
+    platform: Wasm(env:, image:, version:, repo:, output_dir:, atomvmlib:, ..),
     help: False,
   )) =
     cli.parse([

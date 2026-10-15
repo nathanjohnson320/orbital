@@ -14,12 +14,14 @@ pub type Command {
   Usage
   Help
   Flash(platform: FlashPlatform, help: Bool)
-  Build(output_file: Option(String), help: Bool)
+  Build(output_file: Option(String), supported_api: Option(String), help: Bool)
+  Check(supported_api: Option(String), help: Bool)
   List(input_file: Option(String), help: Bool)
   Uf2create(
     output_file: Option(String),
     app_start: Option(String),
     family_id: Option(String),
+    supported_api: Option(String),
     help: Bool,
   )
   Monitor(
@@ -85,6 +87,7 @@ pub type FlashPlatform {
     baud: Option(Int),
     offset: Option(String),
     dry_run: Bool,
+    supported_api: Option(String),
   )
   Pico(
     pico_path: Option(String),
@@ -92,6 +95,7 @@ pub type FlashPlatform {
     picotool: Option(String),
     app_start: Option(String),
     family_id: Option(String),
+    supported_api: Option(String),
   )
   Wasm(
     env: Option(String),
@@ -100,6 +104,7 @@ pub type FlashPlatform {
     repo: Option(String),
     output_dir: Option(String),
     atomvmlib: Option(String),
+    supported_api: Option(String),
   )
 }
 
@@ -111,6 +116,7 @@ pub type ParsingState {
   ParsingFlashWasm
   ParsingHelp
   ParsingBuild
+  ParsingCheck
   ParsingList
   ParsingUf2create
   ParsingMonitor
@@ -160,6 +166,19 @@ pub fn parse(args: List(String)) -> Result(Command, Error) {
     Ok(hoist.Args(arguments: ["build"], flags:)) ->
       Ok(Build(
         output_file: option.from_result(find_flag_value(flags, "output-file")),
+        supported_api: option.from_result(find_flag_value(
+          flags,
+          "supported-api",
+        )),
+        help: toggled(flags, "help"),
+      ))
+
+    Ok(hoist.Args(arguments: ["check"], flags:)) ->
+      Ok(Check(
+        supported_api: option.from_result(find_flag_value(
+          flags,
+          "supported-api",
+        )),
         help: toggled(flags, "help"),
       ))
 
@@ -183,6 +202,7 @@ pub fn parse(args: List(String)) -> Result(Command, Error) {
               baud: None,
               offset: None,
               dry_run: False,
+              supported_api: None,
             ),
             help: True,
           ))
@@ -209,6 +229,10 @@ pub fn parse(args: List(String)) -> Result(Command, Error) {
               picotool: option.from_result(find_flag_value(flags, "picotool")),
               app_start:,
               family_id:,
+              supported_api: option.from_result(find_flag_value(
+                flags,
+                "supported-api",
+              )),
             ),
             help: False,
           ))
@@ -226,6 +250,10 @@ pub fn parse(args: List(String)) -> Result(Command, Error) {
                 "output-dir",
               )),
               atomvmlib: option.from_result(find_flag_value(flags, "atomvmlib")),
+              supported_api: option.from_result(find_flag_value(
+                flags,
+                "supported-api",
+              )),
             ),
             help: False,
           ))
@@ -240,6 +268,10 @@ pub fn parse(args: List(String)) -> Result(Command, Error) {
               baud:,
               offset:,
               dry_run:,
+              supported_api: option.from_result(find_flag_value(
+                flags,
+                "supported-api",
+              )),
             ),
             help: False,
           ))
@@ -255,6 +287,7 @@ pub fn parse(args: List(String)) -> Result(Command, Error) {
             output_file: None,
             app_start: None,
             family_id: None,
+            supported_api: None,
             help: True,
           ))
         False -> {
@@ -267,6 +300,10 @@ pub fn parse(args: List(String)) -> Result(Command, Error) {
             )),
             app_start:,
             family_id:,
+            supported_api: option.from_result(find_flag_value(
+              flags,
+              "supported-api",
+            )),
             help: False,
           ))
         }
@@ -492,6 +529,7 @@ fn parse_args(
     case command, state {
       // The base cli only accepts "help", or "flash" as commands.
       "build", ParsingBase -> Ok(#(ParsingBuild, build_flags()))
+      "check", ParsingBase -> Ok(#(ParsingCheck, check_flags()))
 
       "flash", ParsingBase -> Ok(#(ParsingFlash, base_flash_flags()))
       "esp32", ParsingFlash -> Ok(#(ParsingFlashEsp32, esp_flash_flags()))
@@ -519,6 +557,9 @@ fn parse_args(
 
       // The "build" command accepts no subcommands
       _, ParsingBuild -> Error(UnknownCommand(command:))
+
+      // The "check" command accepts no subcommands
+      _, ParsingCheck -> Error(UnknownCommand(command:))
 
       // The "list" command accepts no subcommands
       _, ParsingList -> Error(UnknownCommand(command:))
@@ -580,8 +621,20 @@ fn build_flags() -> ValidatedFlagSpecs {
         |> hoist.as_toggle,
       hoist.new_flag("output-file")
         |> hoist.with_short_alias("o"),
+      hoist.new_flag("supported-api"),
     ])
   build_flags
+}
+
+fn check_flags() -> ValidatedFlagSpecs {
+  let assert Ok(check_flags) =
+    hoist.validate_flag_specs([
+      hoist.new_flag("help")
+        |> hoist.with_short_alias("h")
+        |> hoist.as_toggle,
+      hoist.new_flag("supported-api"),
+    ])
+  check_flags
 }
 
 fn list_flags() -> ValidatedFlagSpecs {
@@ -617,6 +670,7 @@ fn esp_flash_flags() -> ValidatedFlagSpecs {
         |> hoist.with_short_alias("d")
         |> hoist.as_toggle,
       hoist.new_flag("offset"),
+      hoist.new_flag("supported-api"),
       hoist.new_flag("help")
         |> hoist.with_short_alias("h")
         |> hoist.as_toggle,
@@ -632,6 +686,7 @@ fn pico_flash_flags() -> ValidatedFlagSpecs {
       hoist.new_flag("picotool"),
       hoist.new_flag("app-start"),
       hoist.new_flag("family-id"),
+      hoist.new_flag("supported-api"),
       hoist.new_flag("help")
         |> hoist.with_short_alias("h")
         |> hoist.as_toggle,
@@ -649,6 +704,7 @@ fn wasm_flash_flags() -> ValidatedFlagSpecs {
       hoist.new_flag("output-dir")
         |> hoist.with_short_alias("o"),
       hoist.new_flag("atomvmlib"),
+      hoist.new_flag("supported-api"),
       hoist.new_flag("help")
         |> hoist.with_short_alias("h")
         |> hoist.as_toggle,
@@ -666,6 +722,7 @@ fn uf2create_flags() -> ValidatedFlagSpecs {
         |> hoist.with_short_alias("o"),
       hoist.new_flag("app-start"),
       hoist.new_flag("family-id"),
+      hoist.new_flag("supported-api"),
     ])
   uf2create_flags
 }
@@ -1137,7 +1194,12 @@ pub fn usage_text() -> Document {
     doc.lines(2),
     doc.from_string(ansi.magenta("Commands:")),
     doc.line,
-    command_line("  build        ", "build your code into an 'avm' file"),
+    command_line(
+      "  build        ",
+      "build an 'avm' and check AtomVM compatibility",
+    ),
+    doc.line,
+    command_line("  check        ", "check AtomVM compatibility only"),
     doc.line,
     command_line("  flash        ", "build and flash your code to a device"),
     doc.line,
@@ -1173,7 +1235,10 @@ pub fn flash_help_text(description: Bool) -> Document {
     case description {
       False -> doc.empty
       True ->
-        "Build your project into an 'avm' file and flash it to the given device."
+        {
+          "Build your project into an 'avm' file, check AtomVM compatibility, "
+          <> "and flash it to the given device."
+        }
         |> flex_text
         |> doc.append(doc.lines(2))
     },
@@ -1276,6 +1341,12 @@ pub fn flash_help_text(description: Bool) -> Document {
     doc.lines(2),
     doc.from_string(ansi.magenta("Other flags:")),
     doc.line,
+    flag_line(
+      "  --supported-api <DIR>   ",
+      "AtomVM funcs.txt, instructions.txt, and manifest.json directory "
+      <> "(or set ATOMVM_SUPPORTED_API)",
+    ),
+    doc.line,
     flag_line("  -h, --help               ", "show this help text"),
   ]
   |> doc.concat
@@ -1289,7 +1360,8 @@ pub fn uf2create_help_text(description: Bool) -> Document {
       True ->
         [
           flex_text(
-            "Build your project into an 'avm' file and convert it to a Pico UF2.",
+            "Build your project into an 'avm' file, check AtomVM compatibility, "
+            <> "and convert it to a Pico UF2.",
           ),
           doc.line,
           flex_text(
@@ -1326,6 +1398,11 @@ pub fn uf2create_help_text(description: Bool) -> Document {
       "universal",
     ),
     doc.line,
+    flag_line(
+      "  --supported-api    <DIR>   ",
+      "AtomVM funcs.txt, instructions.txt, and manifest.json directory",
+    ),
+    doc.line,
     flag_line("  -h, --help                  ", "show this help text"),
   ]
   |> doc.concat
@@ -1337,7 +1414,10 @@ pub fn build_help_text(description: Bool) -> Document {
       False -> doc.empty
       True ->
         [
-          flex_text("Build your project into an 'avm' file."),
+          flex_text(
+            "Build your project into an 'avm' file and check it against the "
+            <> "AtomVM supported API.",
+          ),
           doc.line,
           flex_text(
             "This is handy if you need to interact with the 'avm' file with "
@@ -1362,7 +1442,50 @@ pub fn build_help_text(description: Bool) -> Document {
       "\"name_of_your_project.avm\"",
     ),
     doc.line,
+    flag_line(
+      "  --supported-api    <DIR>   ",
+      "AtomVM funcs.txt, instructions.txt, and manifest.json directory "
+      <> "(or set ATOMVM_SUPPORTED_API)",
+    ),
+    doc.line,
     flag_line("  -h, --help                 ", "show this help text"),
+  ]
+  |> doc.concat
+}
+
+pub fn check_help_text(description: Bool) -> Document {
+  [
+    case description {
+      False -> doc.empty
+      True ->
+        [
+          flex_text(
+            "Compile and check your project against the supported AtomVM API "
+            <> "without keeping an '.avm' file.",
+          ),
+          doc.line,
+          flex_text(
+            "`build`, `flash`, and `uf2create` run this check automatically.",
+          ),
+        ]
+        |> doc.concat
+        |> doc.append(doc.lines(2))
+    },
+    doc.from_string(
+      ansi.magenta("Usage: ")
+      <> ansi.green("gleam run -m orbital ")
+      <> "check <FLAGS>",
+    ),
+    doc.lines(2),
+    doc.from_string(ansi.magenta("Flags:")),
+    doc.line,
+    flag_line(
+      "  --supported-api  <DIR>  ",
+      "AtomVM funcs.txt, instructions.txt, and manifest.json directory "
+      <> "(or set ATOMVM_SUPPORTED_API)",
+    ),
+    doc.line,
+    flag_line("  -h, --help              ", "show this help text"),
   ]
   |> doc.concat
 }
@@ -1702,6 +1825,7 @@ pub fn help_text_for_state(state: ParsingState) -> Document {
       flash_help_text(False)
     ParsingHelp -> usage_text()
     ParsingBuild -> build_help_text(False)
+    ParsingCheck -> check_help_text(False)
     ParsingList -> list_help_text(False)
     ParsingUf2create -> uf2create_help_text(False)
     ParsingMonitor -> monitor_help_text(False)

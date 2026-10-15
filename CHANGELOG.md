@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added automatic AtomVM compatibility checks to `build`, `flash`, and
+  `uf2create`, plus an explicit `check` command. Orbital inspects external calls
+  and BEAM instructions in the modules retained by PackBEAM against the pinned,
+  checksummed AtomVM supported API. Custom firmware can use `--supported-api`
+  or `ATOMVM_SUPPORTED_API`.
 - Replaced `priv/monitor.py` with a Gleam + libserialport NIF monitor
   (`make -C priv/native`, platform prebuilts under `priv/`). Flash still uses
   `priv/esp32.py`.
