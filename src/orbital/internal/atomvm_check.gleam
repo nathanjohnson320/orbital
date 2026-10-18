@@ -34,6 +34,9 @@ pub type Report {
 pub type Error {
   CannotInspect(reason: String)
   CannotMatchPackedModule(name: String)
+  MissingEntrypointModule(module: String)
+  MissingEntrypointFunction(module: String)
+  WrongEntrypointArity(module: String)
 }
 
 pub fn inspect(
@@ -47,7 +50,37 @@ pub fn inspect(
     beam_inspect(selected)
     |> result.map_error(CannotInspect),
   )
+  use Nil <- result.try(ensure_entrypoint(beams, entrypoint))
   Ok(compare(beams, entrypoint, api))
+}
+
+/// Confirms the AtomVM entrypoint MFA is exported by a packed module.
+///
+/// This replaces a separate `gleam export package-interface` pass: after
+/// `gleam build`, the BEAM export table is enough to require `name:start/0`.
+///
+pub fn ensure_entrypoint(
+  beams: List(BeamInfo),
+  entrypoint: String,
+) -> Result(Nil, Error) {
+  let module = module_name(entrypoint)
+  case list.find(beams, fn(beam) { beam.module == module }) {
+    Error(_) -> Error(MissingEntrypointModule(module))
+    Ok(beam) ->
+      case list.contains(beam.exports, entrypoint) {
+        True -> Ok(Nil)
+        False ->
+          case has_start_export(beam.exports, module) {
+            True -> Error(WrongEntrypointArity(module))
+            False -> Error(MissingEntrypointFunction(module))
+          }
+      }
+  }
+}
+
+fn has_start_export(exports: List(String), module: String) -> Bool {
+  let prefix = module <> ":start/"
+  list.any(exports, fn(name) { string.starts_with(name, prefix) })
 }
 
 pub fn inspect_beam_files(
