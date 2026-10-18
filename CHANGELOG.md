@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `check` / `build` now share one compile → pack → AtomVM-check pipeline.
+  Entrypoint validation (`name:start/0`) reads BEAM exports after `gleam build`
+  instead of a second `gleam export package-interface` pass, so a missing
+  entrypoint can no longer report a false "compatible" result.
 - Compatibility checks now recognise OTP 28 / Gleam 1.19 captured functions
   emitted as `{move,{literal,fun Mod:Fun/Arity},_}` instead of only
   `make_fun2` / `make_fun3`. Without this, `check` (and post-`build` checks)

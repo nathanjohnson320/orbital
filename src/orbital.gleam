@@ -1,13 +1,10 @@
 import argv
 import filepath
 import glam/doc.{type Document}
-import gleam/dict
 import gleam/int
 import gleam/io
-import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
-import gleam/package_interface
 import gleam/result
 import gleam/string
 import gleam_community/ansi
@@ -771,62 +768,40 @@ fn do_build(
   output_file: Option(String),
   supported_api: Option(String),
 ) -> Result(String, Error) {
-  // In order to do anything useful we need to make sure Gleam is installed
-  // (we'll need to run it to compile the project), and that we're inside a
-  // Gleam project.
-  use gleam <- result.try(
-    executable.find("gleam")
-    |> result.replace_error(CannotFindGleamExecutable),
-  )
-  use project <- result.try(
-    project.load()
-    |> result.map_error(CannotIdentifyProject),
-  )
-
-  // The gleam compiler doesn't recompile the root project when running a module
-  // from a dependency (`gleam run -m orbital`).
-  // This is quite nice as it allows us to run deps even if our own code is not
-  // in a compiling state.
-  // However, in our case we actually want to make sure that when "orbital" is
-  // running it is using the most recent version of the code: it would be quite
-  // confusing to run `gleam run -m orbital` and it flushes an outdated version
-  // of the code because we forgot to run `gleam build && gleam run -m orbital`.
-  // So we start by compiling the root project:
-  use Nil <- try_step("Compiling your Gleam project...", fn() {
-    compile(gleam, project)
-  })
-  use Nil <- try_step("Looking for a suitable entrypoint...", fn() {
-    validate_entrypoint(gleam, project)
-  })
-
+  use project <- result.try(compile_root_project())
   let output_path = option.unwrap(output_file, default_avm_file_name(project))
   use _ <- try_step("Building and checking the 'avm' file...", fn() {
-    let outcome = {
-      use directory <- temporary.create(temporary.directory())
-      let staging = filepath.join(directory, project.name <> ".avm")
-      use checked <- result.try(package_and_check(
-        project,
-        staging,
-        supported_api,
-      ))
-      use Nil <- result.try(
-        simplifile.copy(src: staging, dest: output_path)
-        |> result.map_error(fn(_) { CannotWriteAvmFile(output_path) }),
-      )
-      Ok(checked)
-    }
-    case outcome {
-      Ok(result) -> result
-      Error(_) -> Error(CannotWriteAvmFile(output_path))
-    }
+    stage_checked_avm(project, supported_api, output_path, fn(staging, _) {
+      simplifile.copy(src: staging, dest: output_path)
+      |> result.map_error(fn(_) { CannotWriteAvmFile(output_path) })
+    })
   })
-
   Ok(output_path)
 }
 
 fn do_check(
   api_override: Option(String),
 ) -> Result(#(atomvm_check.Report, supported_api.Api), Error) {
+  use project <- result.try(compile_root_project())
+  use checked <- try_step("Checking AtomVM compatibility...", fn() {
+    stage_checked_avm(
+      project,
+      api_override,
+      "temporary check archive",
+      fn(_, checked) { Ok(checked) },
+    )
+  })
+  Ok(checked)
+}
+
+/// Find Gleam, load the project, and compile the root package.
+///
+/// The gleam compiler doesn't recompile the root project when running a module
+/// from a dependency (`gleam run -m orbital`). That is nice for deps whose
+/// host project may not compile, but orbital must flash/check the latest code —
+/// so every packaging command starts by compiling the root project.
+///
+fn compile_root_project() -> Result(Project, Error) {
   use gleam <- result.try(
     executable.find("gleam")
     |> result.replace_error(CannotFindGleamExecutable),
@@ -838,21 +813,30 @@ fn do_check(
   use Nil <- try_step("Compiling your Gleam project...", fn() {
     compile(gleam, project)
   })
-  use Nil <- try_step("Looking for a suitable entrypoint...", fn() {
-    validate_entrypoint(gleam, project)
-  })
-  use checked <- try_step("Checking AtomVM compatibility...", fn() {
-    let outcome = {
-      use directory <- temporary.create(temporary.directory())
-      let staging = filepath.join(directory, project.name <> ".avm")
-      package_and_check(project, staging, api_override)
-    }
-    case outcome {
-      Ok(result) -> result
-      Error(_) -> Error(CannotWriteAvmFile("temporary check archive"))
-    }
-  })
-  Ok(checked)
+  Ok(project)
+}
+
+/// Pack retained BEAMs, check AtomVM compatibility, then run `then` while the
+/// staged `.avm` still exists. `temp_failure_path` is only used if the temporary
+/// directory itself cannot be created.
+///
+fn stage_checked_avm(
+  project: Project,
+  api_override: Option(String),
+  temp_failure_path: String,
+  then: fn(String, #(atomvm_check.Report, supported_api.Api)) ->
+    Result(a, Error),
+) -> Result(a, Error) {
+  let outcome = {
+    use directory <- temporary.create(temporary.directory())
+    let staging = filepath.join(directory, project.name <> ".avm")
+    use checked <- result.try(package_and_check(project, staging, api_override))
+    then(staging, checked)
+  }
+  case outcome {
+    Ok(result) -> result
+    Error(_) -> Error(CannotWriteAvmFile(temp_failure_path))
+  }
 }
 
 fn package_and_check(
@@ -892,11 +876,23 @@ fn package_and_check(
       project.name <> ":start/0",
       api,
     )
-    |> result.map_error(BeamCheckError),
+    |> result.map_error(beam_check_error),
   )
   case atomvm_check.is_compatible(report) {
     True -> Ok(#(report, api))
     False -> Error(Incompatible(report, api))
+  }
+}
+
+fn beam_check_error(error: atomvm_check.Error) -> Error {
+  case error {
+    atomvm_check.MissingEntrypointModule(module) ->
+      CannotFindEntrypointModule(module)
+    atomvm_check.MissingEntrypointFunction(module) ->
+      CannotFindEntrypointFunction(module)
+    atomvm_check.WrongEntrypointArity(module) ->
+      EntrypointFunctionHasWrongArity(module)
+    other -> BeamCheckError(other)
   }
 }
 
@@ -952,8 +948,6 @@ type Error {
   BeamCheckError(reason: atomvm_check.Error)
   Incompatible(report: atomvm_check.Report, api: supported_api.Api)
 
-  CannotReadPackageInterface(reason: simplifile.FileError)
-  CannotParsePackageInterface(reason: json.DecodeError)
   CannotFindEntrypointModule(module: String)
   CannotFindEntrypointFunction(module: String)
   EntrypointFunctionHasWrongArity(module: String)
@@ -1011,9 +1005,7 @@ fn error_to_string(error: Error) -> String {
     CannotFindGleamExecutable -> "cannot find gleam exectuable"
     CannotSpawnGleamCompiler -> "cannot check Gleam project"
     CannotSpawnEsptool -> "cannot flash to device"
-    CannotListBeamFiles(_)
-    | CannotReadPackageInterface(_)
-    | CannotParsePackageInterface(_) -> "cannot build the 'avm' file"
+    CannotListBeamFiles(_) -> "cannot build the 'avm' file"
   }
 
   let body = case error {
@@ -1110,6 +1102,22 @@ fn error_to_string(error: Error) -> String {
       "PackBEAM retained `"
       <> name
       <> "`, but its compiled BEAM file was not found."
+    // Entrypoint errors are mapped to dedicated Error variants; these arms
+    // keep the match exhaustive if one is ever wrapped.
+    BeamCheckError(atomvm_check.MissingEntrypointModule(module)) ->
+      "Make sure to define a `"
+      <> module
+      <> "` module with a public `start()` function.\n"
+      <> "That is the entrypoint used by AtomVM."
+    BeamCheckError(atomvm_check.MissingEntrypointFunction(module)) ->
+      "Make sure the `"
+      <> module
+      <> "` module defines a public `start()` function.\n"
+      <> "That is the entrypoint used by AtomVM."
+    BeamCheckError(atomvm_check.WrongEntrypointArity(module)) ->
+      "The `start` function in the `"
+      <> module
+      <> "` module must have no arguments to be a valid entrypoint."
 
     Incompatible(report:, api:) -> atomvm_check.format_report(report, api)
 
@@ -1139,12 +1147,6 @@ fn error_to_string(error: Error) -> String {
       <> "field, make sure to add one."
     CannotIdentifyProject(CannotReadProjectName(WrongType(..))) ->
       "This project's name in the 'gleam.toml' file is not a string."
-    CannotReadPackageInterface(_) ->
-      "I couldn't analyse your project's modules.\n"
-      <> bug_report_call_to_action()
-    CannotParsePackageInterface(_) ->
-      "The project's package interface seems to be invalid.\n"
-      <> bug_report_call_to_action()
   }
 
   error_heading(title) <> "\n" <> body
@@ -1242,52 +1244,6 @@ fn compile(gleam: ExecutablePath, project: Project) -> Result(Nil, Error) {
   case exit_code {
     0 -> Ok(Nil)
     _ -> Error(CannotCompileProject)
-  }
-}
-
-/// Makes sure that the project has a valid entry point, suitable to be used by
-/// AtomVM.
-///
-fn validate_entrypoint(
-  gleam: ExecutablePath,
-  project: Project,
-) -> Result(Nil, Error) {
-  // We need to first build the project's package interface, that has info about
-  // all the functions defined by the project.
-  // We do that in a temporary directory so it gets cleaned up automatically!
-  let outcome = {
-    use directory <- temporary.create(temporary.directory())
-    let file = filepath.join(directory, "package_interface.json")
-    let options = ["export", "package-interface", "--out", file]
-    use _ <- result.try(
-      executable.run(gleam, project.root_directory, options)
-      |> result.replace_error(CannotSpawnGleamCompiler),
-    )
-    use package_interface <- result.try(
-      simplifile.read(file)
-      |> result.map_error(CannotReadPackageInterface),
-    )
-    use package_interface <- result.try(
-      json.parse(package_interface, package_interface.decoder())
-      |> result.map_error(CannotParsePackageInterface),
-    )
-    use entrypoint_module <- result.try(
-      dict.get(package_interface.modules, project.name)
-      |> result.replace_error(CannotFindEntrypointModule(project.name)),
-    )
-    use entrypoint_function <- result.try(
-      dict.get(entrypoint_module.functions, "start")
-      |> result.replace_error(CannotFindEntrypointFunction(project.name)),
-    )
-    case entrypoint_function.parameters {
-      [] -> Ok(Nil)
-      _ -> Error(EntrypointFunctionHasWrongArity(project.name))
-    }
-  }
-
-  case outcome {
-    Ok(result) -> result
-    Error(error) -> Error(CannotReadPackageInterface(error))
   }
 }
 

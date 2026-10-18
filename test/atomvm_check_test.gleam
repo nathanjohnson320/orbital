@@ -34,6 +34,7 @@ pub fn supported_calls_and_packaged_exports_pass_test() {
       ),
     ]),
   ]
+  assert atomvm_check.ensure_entrypoint(beams, "app:start/0") == Ok(Nil)
   let report =
     atomvm_check.compare(
       beams,
@@ -41,6 +42,38 @@ pub fn supported_calls_and_packaged_exports_pass_test() {
       api(["erlang:self/0"], ["call_ext", "return"]),
     )
   assert atomvm_check.is_compatible(report)
+}
+
+pub fn missing_entrypoint_module_is_rejected_test() {
+  let assert Error(atomvm_check.MissingEntrypointModule("app")) =
+    atomvm_check.ensure_entrypoint([], "app:start/0")
+}
+
+pub fn missing_entrypoint_function_is_rejected_test() {
+  let beams = [
+    BeamInfo(module: "app", exports: ["app:run/0"], functions: [
+      FunctionInfo(name: "app:run/0", calls: [], local_calls: [], instructions: [
+        "return",
+      ]),
+    ]),
+  ]
+  let assert Error(atomvm_check.MissingEntrypointFunction("app")) =
+    atomvm_check.ensure_entrypoint(beams, "app:start/0")
+}
+
+pub fn wrong_entrypoint_arity_is_rejected_test() {
+  let beams = [
+    BeamInfo(module: "app", exports: ["app:start/1"], functions: [
+      FunctionInfo(
+        name: "app:start/1",
+        calls: [],
+        local_calls: [],
+        instructions: ["return"],
+      ),
+    ]),
+  ]
+  let assert Error(atomvm_check.WrongEntrypointArity("app")) =
+    atomvm_check.ensure_entrypoint(beams, "app:start/0")
 }
 
 pub fn missing_entries_are_grouped_and_sorted_test() {
