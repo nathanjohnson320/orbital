@@ -1,6 +1,6 @@
 import gleam/option.{None, Some}
 import gleeunit
-import orbital/internal/cli.{Install, InstallPico}
+import orbital/internal/cli.{Install, InstallPico, InstallPsp}
 
 pub fn main() -> Nil {
   gleeunit.main()
@@ -179,4 +179,59 @@ pub fn install_pico_list_images_test() {
 pub fn install_esp32_platform_alias_test() {
   let assert Ok(Install(list_images: True, ..)) =
     cli.parse(["install", "esp32", "--list-images"])
+}
+
+pub fn install_psp_requires_image_or_version_test() {
+  let assert Error(cli.ConflictingFlags(_)) = cli.parse(["install", "psp"])
+}
+
+pub fn install_psp_image_defaults_test() {
+  let assert Ok(InstallPsp(
+    image:,
+    version:,
+    repo:,
+    download_only: False,
+    list_images: False,
+    psp_path:,
+    game_dir:,
+    help: False,
+  )) = cli.parse(["install", "psp", "--image", "./EBOOT.PBP"])
+
+  assert image == Some("./EBOOT.PBP")
+  assert version == None
+  assert repo == None
+  assert psp_path == None
+  assert game_dir == None
+}
+
+pub fn install_psp_flags_test() {
+  let assert Ok(InstallPsp(
+    image:,
+    version: None,
+    download_only: True,
+    list_images: False,
+    psp_path:,
+    game_dir:,
+    ..,
+  )) =
+    cli.parse([
+      "install",
+      "psp",
+      "--image",
+      "./EBOOT.PBP",
+      "--download-only",
+      "--psp-path",
+      "~/.config/ppsspp/PSP/GAME/ATOMVM",
+      "--game-dir",
+      "ATOMVM",
+    ])
+
+  assert image == Some("./EBOOT.PBP")
+  assert psp_path == Some("~/.config/ppsspp/PSP/GAME/ATOMVM")
+  assert game_dir == Some("ATOMVM")
+}
+
+pub fn install_psp_list_images_test() {
+  let assert Ok(InstallPsp(list_images: True, image: None, ..)) =
+    cli.parse(["install", "psp", "--list-images"])
 }

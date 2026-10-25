@@ -66,6 +66,16 @@ pub type Command {
     with_atomvmlib: Bool,
     help: Bool,
   )
+  InstallPsp(
+    image: Option(String),
+    version: Option(String),
+    repo: Option(String),
+    download_only: Bool,
+    list_images: Bool,
+    psp_path: Option(String),
+    game_dir: Option(String),
+    help: Bool,
+  )
   Expand(port: Option(String), help: Bool)
   EraseFlash(port: Option(String), help: Bool)
   Info(help: Bool)
@@ -106,6 +116,11 @@ pub type FlashPlatform {
     atomvmlib: Option(String),
     supported_api: Option(String),
   )
+  Psp(
+    psp_path: Option(String),
+    game_dir: Option(String),
+    supported_api: Option(String),
+  )
 }
 
 pub type ParsingState {
@@ -114,6 +129,7 @@ pub type ParsingState {
   ParsingFlashEsp32
   ParsingFlashPico
   ParsingFlashWasm
+  ParsingFlashPsp
   ParsingHelp
   ParsingBuild
   ParsingCheck
@@ -123,6 +139,7 @@ pub type ParsingState {
   ParsingInstall
   ParsingInstallPico
   ParsingInstallWasm
+  ParsingInstallPsp
   ParsingExpand
   ParsingEraseFlash
   ParsingInfo
@@ -250,6 +267,19 @@ pub fn parse(args: List(String)) -> Result(Command, Error) {
                 "output-dir",
               )),
               atomvmlib: option.from_result(find_flag_value(flags, "atomvmlib")),
+              supported_api: option.from_result(find_flag_value(
+                flags,
+                "supported-api",
+              )),
+            ),
+            help: False,
+          ))
+
+        False, ["psp"] ->
+          Ok(Flash(
+            platform: Psp(
+              psp_path: option.from_result(find_flag_value(flags, "psp-path")),
+              game_dir: option.from_result(find_flag_value(flags, "game-dir")),
               supported_api: option.from_result(find_flag_value(
                 flags,
                 "supported-api",
@@ -485,6 +515,44 @@ pub fn parse(args: List(String)) -> Result(Command, Error) {
         }
       }
 
+    Ok(hoist.Args(arguments: ["install", "psp"], flags:)) ->
+      case toggled(flags, "help") {
+        True ->
+          Ok(InstallPsp(
+            image: None,
+            version: None,
+            repo: None,
+            download_only: False,
+            list_images: False,
+            psp_path: None,
+            game_dir: None,
+            help: True,
+          ))
+        False -> {
+          let image = option.from_result(find_flag_value(flags, "image"))
+          let version = option.from_result(find_flag_value(flags, "version"))
+          let repo = option.from_result(find_flag_value(flags, "repo"))
+          let download_only = toggled(flags, "download-only")
+          let list_images = toggled(flags, "list-images")
+          use Nil <- result.try(validate_psp_install_flags(
+            image:,
+            version:,
+            download_only:,
+            list_images:,
+          ))
+          Ok(InstallPsp(
+            image:,
+            version:,
+            repo:,
+            download_only:,
+            list_images:,
+            psp_path: option.from_result(find_flag_value(flags, "psp-path")),
+            game_dir: option.from_result(find_flag_value(flags, "game-dir")),
+            help: False,
+          ))
+        }
+      }
+
     Ok(hoist.Args(arguments: ["expand"], flags:)) ->
       case toggled(flags, "help") {
         True -> Ok(Expand(port: None, help: True))
@@ -535,6 +603,7 @@ fn parse_args(
       "esp32", ParsingFlash -> Ok(#(ParsingFlashEsp32, esp_flash_flags()))
       "pico", ParsingFlash -> Ok(#(ParsingFlashPico, pico_flash_flags()))
       "wasm", ParsingFlash -> Ok(#(ParsingFlashWasm, wasm_flash_flags()))
+      "psp", ParsingFlash -> Ok(#(ParsingFlashPsp, psp_flash_flags()))
 
       "list", ParsingBase -> Ok(#(ParsingList, list_flags()))
       "uf2create", ParsingBase -> Ok(#(ParsingUf2create, uf2create_flags()))
@@ -545,6 +614,7 @@ fn parse_args(
       "esp32", ParsingInstall -> Ok(#(ParsingInstall, install_flags()))
       "pico", ParsingInstall -> Ok(#(ParsingInstallPico, pico_install_flags()))
       "wasm", ParsingInstall -> Ok(#(ParsingInstallWasm, wasm_install_flags()))
+      "psp", ParsingInstall -> Ok(#(ParsingInstallPsp, psp_install_flags()))
       "expand", ParsingBase -> Ok(#(ParsingExpand, expand_flags()))
       "erase-flash", ParsingBase ->
         Ok(#(ParsingEraseFlash, erase_flash_flags()))
@@ -570,9 +640,12 @@ fn parse_args(
       // The "monitor" command takes optional esp32/pico platforms
       _, ParsingMonitor -> Error(UnknownCommand(command:))
 
-      // The "install" command takes esp32/pico/wasm platforms
-      _, ParsingInstall | _, ParsingInstallPico | _, ParsingInstallWasm ->
-        Ok(#(state, flags))
+      // The "install" command takes esp32/pico/wasm/psp platforms
+      _, ParsingInstall
+      | _, ParsingInstallPico
+      | _, ParsingInstallWasm
+      | _, ParsingInstallPsp
+      -> Ok(#(state, flags))
 
       // The "expand" command accepts no subcommands
       _, ParsingExpand -> Error(UnknownCommand(command:))
@@ -590,6 +663,7 @@ fn parse_args(
       | _, ParsingFlashEsp32
       | _, ParsingFlashPico
       | _, ParsingFlashWasm
+      | _, ParsingFlashPsp
       -> Ok(#(state, flags))
     }
   })
@@ -712,6 +786,19 @@ fn wasm_flash_flags() -> ValidatedFlagSpecs {
   wasm_flash_flags
 }
 
+fn psp_flash_flags() -> ValidatedFlagSpecs {
+  let assert Ok(psp_flash_flags) =
+    hoist.validate_flag_specs([
+      hoist.new_flag("psp-path"),
+      hoist.new_flag("game-dir"),
+      hoist.new_flag("supported-api"),
+      hoist.new_flag("help")
+        |> hoist.with_short_alias("h")
+        |> hoist.as_toggle,
+    ])
+  psp_flash_flags
+}
+
 fn uf2create_flags() -> ValidatedFlagSpecs {
   let assert Ok(uf2create_flags) =
     hoist.validate_flag_specs([
@@ -808,6 +895,25 @@ fn wasm_install_flags() -> ValidatedFlagSpecs {
         |> hoist.as_toggle,
     ])
   wasm_install_flags
+}
+
+fn psp_install_flags() -> ValidatedFlagSpecs {
+  let assert Ok(psp_install_flags) =
+    hoist.validate_flag_specs([
+      hoist.new_flag("image"),
+      hoist.new_flag("version"),
+      hoist.new_flag("repo"),
+      hoist.new_flag("download-only")
+        |> hoist.as_toggle,
+      hoist.new_flag("list-images")
+        |> hoist.as_toggle,
+      hoist.new_flag("psp-path"),
+      hoist.new_flag("game-dir"),
+      hoist.new_flag("help")
+        |> hoist.with_short_alias("h")
+        |> hoist.as_toggle,
+    ])
+  psp_install_flags
 }
 
 fn parse_esp32_install(
@@ -992,6 +1098,48 @@ fn validate_wasm_install_flags(
             "--image and --version cannot be used together",
           ))
         False -> Ok(Nil)
+      }
+  }
+}
+
+fn validate_psp_install_flags(
+  image image: Option(String),
+  version version: Option(String),
+  download_only download_only: Bool,
+  list_images list_images: Bool,
+) -> Result(Nil, Error) {
+  case list_images {
+    True ->
+      case option.is_some(image) || option.is_some(version) || download_only {
+        True ->
+          Error(ConflictingFlags(
+            "--list-images cannot be combined with --image, --version or --download-only",
+          ))
+        False -> Ok(Nil)
+      }
+    False ->
+      case option.is_some(image) && option.is_some(version) {
+        True ->
+          Error(ConflictingFlags(
+            "--image and --version cannot be used together",
+          ))
+        False ->
+          case
+            option.is_some(image) || option.is_some(version) || download_only
+          {
+            True ->
+              case download_only, image, version {
+                True, None, None ->
+                  Error(ConflictingFlags(
+                    "--download-only needs --image or --version",
+                  ))
+                _, _, _ -> Ok(Nil)
+              }
+            False ->
+              Error(ConflictingFlags(
+                "Pass --image /path/to/EBOOT.PBP (or --version / --list-images)",
+              ))
+          }
       }
   }
 }
@@ -1214,7 +1362,10 @@ pub fn usage_text() -> Document {
       "show the console of an ESP32 or Pico board",
     ),
     doc.line,
-    command_line("  install      ", "install AtomVM on ESP32, Pico, or WASM"),
+    command_line(
+      "  install      ",
+      "install AtomVM on ESP32, Pico, WASM, or PSP",
+    ),
     doc.line,
     command_line("  expand       ", "grow main.avm to the end of ESP32 flash"),
     doc.line,
@@ -1337,6 +1488,22 @@ pub fn flash_help_text(description: Bool) -> Document {
     flag_line(
       "    --atomvmlib    <PATH>  ",
       "optional atomvmlib.avm (downloaded to match --version when omitted)",
+    ),
+    doc.lines(2),
+    command_line(
+      "  psp    ",
+      "copy app.avm beside AtomVM EBOOT on a PPSSPP / Memory Stick GAME folder",
+    ),
+    doc.line,
+    flag_line(
+      "    --psp-path     <PATH>  ",
+      "ATOMVM game folder or memstick root (default: PPSSPP GAME/ATOMVM)",
+    ),
+    doc.line,
+    flag_line_with_default(
+      "    --game-dir     <NAME>  ",
+      "PSP/GAME/<NAME> folder (must match ms0 hardcoded ATOMVM)",
+      "ATOMVM",
     ),
     doc.lines(2),
     doc.from_string(ansi.magenta("Other flags:")),
@@ -1728,6 +1895,47 @@ pub fn install_help_text(description: Bool) -> Document {
       "skip downloading atomvmlib-*.avm",
     ),
     doc.lines(2),
+    command_line(
+      "  psp    ",
+      "copy a prebuilt AtomVM EBOOT.PBP into PSP/GAME/ATOMVM",
+    ),
+    doc.line,
+    flag_line(
+      "    --image           <PATH|NAME>  ",
+      "local EBOOT.PBP / zip, or a published asset name",
+    ),
+    doc.line,
+    flag_line(
+      "    --version         <TAG>        ",
+      "atomvm-psp release tag (when assets are published)",
+    ),
+    doc.line,
+    flag_line(
+      "    --repo            <OWNER/REPO> ",
+      "GitHub repository of PSP builds (default nathanjohnson320/atomvm-psp)",
+    ),
+    doc.line,
+    flag_line(
+      "    --download-only                ",
+      "download into firmware_images/ without installing",
+    ),
+    doc.line,
+    flag_line(
+      "    --list-images                  ",
+      "list installable PSP EBOOTs (or explain how to use --image)",
+    ),
+    doc.line,
+    flag_line(
+      "    --psp-path        <PATH>       ",
+      "ATOMVM game folder or memstick root",
+    ),
+    doc.line,
+    flag_line_with_default(
+      "    --game-dir        <NAME>       ",
+      "PSP/GAME/<NAME> folder name",
+      "ATOMVM",
+    ),
+    doc.lines(2),
     doc.from_string(ansi.magenta("Other flags:")),
     doc.line,
     flag_line("  -h, --help                       ", "show this help text"),
@@ -1821,16 +2029,21 @@ pub fn info_help_text(description: Bool) -> Document {
 pub fn help_text_for_state(state: ParsingState) -> Document {
   case state {
     ParsingBase -> usage_text()
-    ParsingFlash | ParsingFlashEsp32 | ParsingFlashPico | ParsingFlashWasm ->
-      flash_help_text(False)
+    ParsingFlash
+    | ParsingFlashEsp32
+    | ParsingFlashPico
+    | ParsingFlashWasm
+    | ParsingFlashPsp -> flash_help_text(False)
     ParsingHelp -> usage_text()
     ParsingBuild -> build_help_text(False)
     ParsingCheck -> check_help_text(False)
     ParsingList -> list_help_text(False)
     ParsingUf2create -> uf2create_help_text(False)
     ParsingMonitor -> monitor_help_text(False)
-    ParsingInstall | ParsingInstallPico | ParsingInstallWasm ->
-      install_help_text(False)
+    ParsingInstall
+    | ParsingInstallPico
+    | ParsingInstallWasm
+    | ParsingInstallPsp -> install_help_text(False)
     ParsingExpand -> expand_help_text(False)
     ParsingEraseFlash -> erase_flash_help_text(False)
     ParsingInfo -> info_help_text(False)

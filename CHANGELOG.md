@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Added PlayStation Portable support modeled on the Pico target:
+  - `install psp` copies a local AtomVM `EBOOT.PBP` (or zip containing one) into
+    `PSP/GAME/ATOMVM/` on a PPSSPP memstick or USB Memory Stick
+    (`--image`, `--psp-path`, `--game-dir`, `--list-images`, `--download-only`,
+    `--repo`, `--version`).
+  - `flash psp` builds the project AVM and copies it to `app.avm` beside the
+    installed EBOOT for ms0 load / hot-swap.
+  - Defaults prefer `~/.config/ppsspp/PSP/GAME/ATOMVM` (Linux) or the macOS
+    PPSSPP Application Support path; override with `--psp-path` /
+    `ATOMVM_PSP_PATH`.
 - `check` / `build` now share one compile → pack → AtomVM-check pipeline.
   Entrypoint validation (`name:start/0`) reads BEAM exports after `gleam build`
   instead of a second `gleam export package-interface` pass, so a missing
