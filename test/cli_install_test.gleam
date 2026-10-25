@@ -181,8 +181,17 @@ pub fn install_esp32_platform_alias_test() {
     cli.parse(["install", "esp32", "--list-images"])
 }
 
-pub fn install_psp_requires_image_or_version_test() {
-  let assert Error(cli.ConflictingFlags(_)) = cli.parse(["install", "psp"])
+pub fn install_psp_defaults_test() {
+  let assert Ok(InstallPsp(
+    image: None,
+    version: None,
+    repo: None,
+    download_only: False,
+    list_images: False,
+    psp_path: None,
+    game_dir: None,
+    help: False,
+  )) = cli.parse(["install", "psp"])
 }
 
 pub fn install_psp_image_defaults_test() {

@@ -3,10 +3,10 @@
 ## Unreleased
 
 - Added PlayStation Portable support modeled on the Pico target:
-  - `install psp` copies a local AtomVM `EBOOT.PBP` (or zip containing one) into
-    `PSP/GAME/ATOMVM/` on a PPSSPP memstick or USB Memory Stick
-    (`--image`, `--psp-path`, `--game-dir`, `--list-images`, `--download-only`,
-    `--repo`, `--version`).
+  - `install psp` installs an AtomVM `EBOOT.PBP` into `PSP/GAME/ATOMVM/` on a
+    PPSSPP memstick or USB Memory Stick (latest release, `--image`, or
+    `--version`; also `--psp-path`, `--game-dir`, `--list-images`,
+    `--download-only`, `--repo`).
   - `flash psp` builds the project AVM and copies it to `app.avm` beside the
     installed EBOOT for ms0 load / hot-swap.
   - Defaults prefer `~/.config/ppsspp/PSP/GAME/ATOMVM` (Linux) or the macOS

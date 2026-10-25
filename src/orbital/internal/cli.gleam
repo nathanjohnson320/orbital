@@ -1108,6 +1108,7 @@ fn validate_psp_install_flags(
   download_only download_only: Bool,
   list_images list_images: Bool,
 ) -> Result(Nil, Error) {
+  let _ = download_only
   case list_images {
     True ->
       case option.is_some(image) || option.is_some(version) || download_only {
@@ -1123,23 +1124,7 @@ fn validate_psp_install_flags(
           Error(ConflictingFlags(
             "--image and --version cannot be used together",
           ))
-        False ->
-          case
-            option.is_some(image) || option.is_some(version) || download_only
-          {
-            True ->
-              case download_only, image, version {
-                True, None, None ->
-                  Error(ConflictingFlags(
-                    "--download-only needs --image or --version",
-                  ))
-                _, _, _ -> Ok(Nil)
-              }
-            False ->
-              Error(ConflictingFlags(
-                "Pass --image /path/to/EBOOT.PBP (or --version / --list-images)",
-              ))
-          }
+        False -> Ok(Nil)
       }
   }
 }
@@ -1907,7 +1892,7 @@ pub fn install_help_text(description: Bool) -> Document {
     doc.line,
     flag_line(
       "    --version         <TAG>        ",
-      "atomvm-psp release tag (when assets are published)",
+      "atomvm-psp release tag to install",
     ),
     doc.line,
     flag_line(
@@ -1922,7 +1907,7 @@ pub fn install_help_text(description: Bool) -> Document {
     doc.line,
     flag_line(
       "    --list-images                  ",
-      "list installable PSP EBOOTs (or explain how to use --image)",
+      "list installable PSP EBOOTs",
     ),
     doc.line,
     flag_line(

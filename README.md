@@ -101,15 +101,16 @@ Install the EBOOT once into `PSP/GAME/ATOMVM/`, then flash your Gleam app as
 
 ```sh
 gleam run -m orbital install psp --list-images
+gleam run -m orbital install psp
 gleam run -m orbital install psp --image /path/to/EBOOT.PBP
 gleam run -m orbital flash psp
 gleam run -m orbital flash psp --psp-path ~/.config/ppsspp/PSP/GAME/ATOMVM
 ```
 
-`install psp` currently expects a local `--image` (bare `EBOOT.PBP` or a zip
-containing one); atomvm-psp has no published GitHub release assets yet. Default
-`--psp-path` is the PPSSPP memstick `GAME/ATOMVM` folder when present, otherwise
-pass `--psp-path` to a Memory Stick root or the `ATOMVM` game directory.
+`install psp` downloads the latest atomvm-psp release EBOOT (or a local
+`--image` / `--version`). Default `--psp-path` is the PPSSPP memstick
+`GAME/ATOMVM` folder when present; otherwise pass `--psp-path` to a Memory Stick
+root or the `ATOMVM` game directory.
 
 `flash psp` builds and checks your project AVM, then copies it to
 `app.avm` next to the installed EBOOT. Extra `*.avm` files in that folder can be

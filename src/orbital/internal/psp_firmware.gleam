@@ -1,8 +1,7 @@
 //// PSP AtomVM firmware discovery for `install psp`.
 ////
-//// Prefer a local `--image` path to `EBOOT.PBP` (or a zip containing one).
-//// GitHub releases under `nathanjohnson320/atomvm-psp` are prepared for but
-//// none are published yet — listing/download soft-fail with a clear message.
+//// Resolves a local `--image` (`EBOOT.PBP` or zip) or downloads a release
+//// asset from `nathanjohnson320/atomvm-psp` (override with `--repo`).
 
 import filepath
 import gleam/bit_array
@@ -43,7 +42,6 @@ pub type Image {
 }
 
 pub type Error {
-  ImageRequired
   UnknownImage(String)
   ReleaseNotFound(String)
   NoReleaseAssets
@@ -54,21 +52,12 @@ pub type Error {
 
 pub fn error_message(error: Error) -> String {
   case error {
-    ImageRequired ->
-      "Pass --image /path/to/EBOOT.PBP (or a zip containing EBOOT.PBP).\n"
-      <> "atomvm-psp has no published GitHub release assets yet.\n"
-      <> "Build one with psp-cmake in nathanjohnson320/atomvm-psp, or use --list-images."
     UnknownImage(name) -> "Unknown PSP firmware image '" <> name <> "'."
-    ReleaseNotFound(tag) ->
-      "atomvm-psp release '"
-      <> tag
-      <> "' was not found (or the repo is private)."
+    ReleaseNotFound(tag) -> "atomvm-psp release '" <> tag <> "' was not found."
     NoReleaseAssets ->
-      "No AtomVM PSP EBOOT assets found in recent releases of "
+      "No AtomVM PSP EBOOT assets found in that release of "
       <> default_repo
-      <> ".\n"
-      <> "The repository is private and currently has no published builds.\n"
-      <> "Pass --image /path/to/EBOOT.PBP instead."
+      <> "."
     Network(reason) -> reason
     FileError(reason) -> reason
     EbootNotInZip(path) ->
@@ -82,74 +71,55 @@ pub fn default_firmware_repo() -> String {
   default_repo
 }
 
-/// Human-readable listing. Soft-fails when the private repo has no assets.
+/// Human-readable listing of remote + cached PSP EBOOT images.
 pub fn list_images_text(repo: Option(String)) -> Result(String, Error) {
-  let repo_name = option.unwrap(repo, default_repo)
-  case list_remote_images(repo) {
-    Ok([]) ->
-      Ok(
-        "AtomVM PSP images from "
-        <> repo_name
-        <> ":\n  (none published)\n\n"
-        <> "Install a local build with:\n"
-        <> "  gleam run -m orbital install psp --image /path/to/EBOOT.PBP\n",
-      )
-    Ok(images) -> {
-      let cached = list_cached_images()
-      let remote_block =
-        images
-        |> list.map(fn(i) {
+  use images <- result.try(list_remote_images(repo))
+  let cached = list_cached_images()
+  let remote_block = case images {
+    [] -> "  (none found)"
+    _ ->
+      images
+      |> list.map(fn(i) {
+        "  "
+        <> i.file
+        <> case i.size {
+          Some(size) -> "  " <> format_kb(size)
+          None -> ""
+        }
+        <> case i.prerelease {
+          True -> "  (prerelease)"
+          False -> ""
+        }
+      })
+      |> string.join(with: "\n")
+  }
+  let local_block = case cached {
+    [] -> ""
+    _ ->
+      "\nCached locally:\n"
+      <> string.join(
+        list.map(cached, fn(i) {
           "  "
           <> i.file
-          <> case i.size {
-            Some(size) -> "  " <> format_kb(size)
+          <> case i.path {
+            Some(path) -> "  (" <> path <> ")"
             None -> ""
           }
-          <> case i.prerelease {
-            True -> "  (prerelease)"
-            False -> ""
-          }
-        })
-        |> string.join(with: "\n")
-      let local_block = case cached {
-        [] -> ""
-        _ ->
-          "\nCached locally:\n"
-          <> string.join(
-            list.map(cached, fn(i) {
-              "  "
-              <> i.file
-              <> case i.path {
-                Some(path) -> "  (" <> path <> ")"
-                None -> ""
-              }
-            }),
-            with: "\n",
-          )
-      }
-      Ok(
-        "AtomVM PSP EBOOT images:\n"
-        <> remote_block
-        <> local_block
-        <> "\n\nInstall with:\n  gleam run -m orbital install psp --image <name-or-path>\n",
+        }),
+        with: "\n",
       )
-    }
-    Error(Network(reason)) ->
-      Ok(
-        "Could not list "
-        <> repo_name
-        <> " releases ("
-        <> reason
-        <> ").\n"
-        <> "The repository may be private or have no releases yet.\n\n"
-        <> "Install a local build with:\n"
-        <> "  gleam run -m orbital install psp --image /path/to/EBOOT.PBP\n",
-      )
-    Error(other) -> Error(other)
   }
+  Ok(
+    "AtomVM PSP EBOOT images:\n"
+    <> remote_block
+    <> local_block
+    <> "\n\nInstall with:\n  gleam run -m orbital install psp\n"
+    <> "  gleam run -m orbital install psp --image <name-or-path>\n",
+  )
 }
 
-/// Resolve an image: local EBOOT/zip path, cached name, or release tag/board.
+/// Resolve an image: local EBOOT/zip path, published name, or release tag.
+/// With neither `--image` nor `--version`, fetches the latest release asset.
 pub fn resolve_image(
   image image: Option(String),
   version version: Option(String),
@@ -161,11 +131,7 @@ pub fn resolve_image(
         Ok(True) -> local_image(path_or_name)
         _ -> ensure_named(path_or_name, repo)
       }
-    None ->
-      case version {
-        Some(tag) -> ensure_version(tag, repo)
-        None -> Error(ImageRequired)
-      }
+    None -> ensure_version(version, repo)
   }
 }
 
@@ -281,10 +247,10 @@ fn ensure_named(name: String, repo: Option(String)) -> Result(Image, Error) {
 }
 
 fn ensure_version(
-  version: String,
+  version: Option(String),
   repo: Option(String),
 ) -> Result(Image, Error) {
-  use release <- result.try(fetch_release(repo, Some(version)))
+  use release <- result.try(fetch_release(repo, version))
   case release_images(release) {
     [] -> Error(NoReleaseAssets)
     [image, ..] -> ensure_cached(image)
