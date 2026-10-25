@@ -2,7 +2,7 @@ import gleam/option.{None, Some}
 import gleeunit
 import orbital/internal/cli.{
   Build, Check, EraseFlash, Esp32, Expand, Flash, Info, InstallWasm, Monitor,
-  MonitorAuto, MonitorEsp32, MonitorPico, Pico, Uf2create, Wasm,
+  MonitorAuto, MonitorEsp32, MonitorPico, Pico, Psp, Uf2create, Wasm,
 }
 
 pub fn main() -> Nil {
@@ -339,4 +339,34 @@ pub fn install_wasm_rejects_image_and_version_test() {
       "--version",
       "v0.6.6",
     ])
+}
+
+pub fn psp_flash_defaults_test() {
+  let assert Ok(Flash(platform:, help: False)) = cli.parse(["flash", "psp"])
+
+  let assert Psp(psp_path:, game_dir:, supported_api:) = platform
+  assert psp_path == None
+  assert game_dir == None
+  assert supported_api == None
+}
+
+pub fn psp_flash_flags_test() {
+  let assert Ok(Flash(
+    platform: Psp(psp_path:, game_dir:, supported_api:),
+    help: False,
+  )) =
+    cli.parse([
+      "flash",
+      "psp",
+      "--psp-path",
+      "/tmp/ppsspp/PSP/GAME/ATOMVM",
+      "--game-dir",
+      "ATOMVM",
+      "--supported-api",
+      "./api",
+    ])
+
+  assert psp_path == Some("/tmp/ppsspp/PSP/GAME/ATOMVM")
+  assert game_dir == Some("ATOMVM")
+  assert supported_api == Some("./api")
 }

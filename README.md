@@ -92,6 +92,30 @@ gleam run -m orbital uf2create
 gleam run -m orbital flash pico --pico-path /Volumes/RPI-RP2 --family-id data
 ```
 
+### PlayStation Portable (CFW / PPSSPP)
+
+AtomVM on PSP is a homebrew `EBOOT.PBP` (from
+[atomvm-psp](https://github.com/nathanjohnson320/atomvm-psp)), not MCU firmware.
+Install the EBOOT once into `PSP/GAME/ATOMVM/`, then flash your Gleam app as
+`app.avm` beside it (ms0 load / hot-swap).
+
+```sh
+gleam run -m orbital install psp --list-images
+gleam run -m orbital install psp
+gleam run -m orbital install psp --image /path/to/EBOOT.PBP
+gleam run -m orbital flash psp
+gleam run -m orbital flash psp --psp-path ~/.config/ppsspp/PSP/GAME/ATOMVM
+```
+
+`install psp` downloads the latest atomvm-psp release EBOOT (or a local
+`--image` / `--version`). Default `--psp-path` is the PPSSPP memstick
+`GAME/ATOMVM` folder when present; otherwise pass `--psp-path` to a Memory Stick
+root or the `ATOMVM` game directory.
+
+`flash psp` builds and checks your project AVM, then copies it to
+`app.avm` next to the installed EBOOT. Extra `*.avm` files in that folder can be
+hot-swapped from AtomVM's on-device picker after `start/0` returns.
+
 ### WebAssembly (Emscripten)
 
 AtomVM ships separate Node.js and browser WASM builds. ExAtomVM does not wrap

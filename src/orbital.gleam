@@ -21,6 +21,8 @@ import orbital/internal/pico_install
 import orbital/internal/project.{
   type Project, CannotParseGleamToml, CannotReadGleamToml, CannotReadProjectName,
 }
+import orbital/internal/psp
+import orbital/internal/psp_install
 import orbital/internal/supported_api
 import orbital/internal/wasm
 import orbital/internal/wasm_install
@@ -156,6 +158,28 @@ pub fn main() -> Nil {
         with_atomvmlib:,
       ))
 
+    Ok(cli.InstallPsp(help: True, ..)) ->
+      print_document(cli.install_help_text(True))
+    Ok(cli.InstallPsp(
+      image:,
+      version:,
+      repo:,
+      download_only:,
+      list_images:,
+      psp_path:,
+      game_dir:,
+      help: False,
+    )) ->
+      run_psp_install(psp_install.Options(
+        image:,
+        version:,
+        repo:,
+        download_only:,
+        list_images:,
+        psp_path:,
+        game_dir:,
+      ))
+
     Ok(cli.Expand(help: True, ..)) -> print_document(cli.expand_help_text(True))
     Ok(cli.Expand(port:, help: False)) -> expand(port)
 
@@ -219,6 +243,10 @@ fn flash(platform: cli.FlashPlatform) -> Nil {
         supported_api: api,
       ))
       Ok(outcome)
+    }
+    cli.Psp(psp_path:, game_dir:, supported_api: api) -> {
+      use _ <- result.try(do_flash_psp(psp_path:, game_dir:, supported_api: api))
+      Ok(True)
     }
   }
 
@@ -286,6 +314,21 @@ fn run_wasm_install(options: wasm_install.Options) -> Nil {
     Ok(Nil) -> Nil
     Error(error) -> {
       let message = wasm_install.error_message(error)
+      case message {
+        "" -> Nil
+        _ -> io.println(error_heading("install failed") <> "\n" <> message)
+      }
+      exit(1)
+    }
+  }
+}
+
+fn run_psp_install(options: psp_install.Options) -> Nil {
+  case psp_install.run(options) {
+    Ok(Nil) -> Nil
+    Error(psp_install.Cancelled) -> exit(0)
+    Error(error) -> {
+      let message = psp_install.error_message(error)
       case message {
         "" -> Nil
         _ -> io.println(error_heading("install failed") <> "\n" <> message)
@@ -653,6 +696,32 @@ fn do_flash_esp32(
   }
 }
 
+fn do_flash_psp(
+  psp_path psp_path: Option(String),
+  game_dir game_dir: Option(String),
+  supported_api supported_api: Option(String),
+) -> Result(Nil, Error) {
+  let outcome = {
+    use directory <- temporary.create(temporary.directory())
+    let avm_path = filepath.join(directory, "build.avm")
+    use _ <- result.try(do_build(Some(avm_path), supported_api))
+    use Nil <- try_step("Copying app.avm onto the PSP game folder...", fn() {
+      psp.flash_avm(avm_path, psp.FlashOptions(psp_path:, game_dir:))
+      |> result.replace(Nil)
+      |> result.map_error(PspError)
+    })
+    Ok(Nil)
+  }
+
+  case outcome {
+    Ok(result) -> result
+    Error(_) ->
+      Error(
+        PspError(psp.CannotWriteAvm(path: "temporary directory", reason: Enoent)),
+      )
+  }
+}
+
 fn do_flash_pico(
   pico_path pico_path: Option(String),
   pico_reset pico_reset: Option(String),
@@ -955,6 +1024,7 @@ type Error {
 
   CannotFlashWithEsptool(esptool_status_code: Int)
   PicoError(reason: pico.Error)
+  PspError(reason: psp.Error)
   WasmError(reason: wasm.Error)
   EsptoolCannotOpenPort(port: String)
   CannotReadPartitionTable
@@ -977,6 +1047,7 @@ fn error_to_string(error: Error) -> String {
     CannotFlashWithEsptool(_)
     | EsptoolCannotOpenPort(_)
     | PicoError(_)
+    | PspError(_)
     | WasmError(_)
     | CannotReadPartitionTable
     | CannotFindMainPartition -> "cannot flash device"
@@ -1042,6 +1113,8 @@ fn error_to_string(error: Error) -> String {
       <> "."
 
     PicoError(reason:) -> pico.error_message(reason)
+
+    PspError(reason:) -> psp.error_message(reason)
 
     WasmError(reason:) -> wasm.error_message(reason)
 
