@@ -153,6 +153,18 @@ AtomVM. Run the same check without keeping an `.avm` file with:
 gleam run -m orbital check
 ```
 
+A call is available when it is either:
+
+- defined on a module retained by PackBEAM (exports **and** locals / anonymous
+  Gleam captures), or
+- listed in the AtomVM supported API (`funcs.txt`).
+
+Modules pruned out of the AVM are reported missing. Optional asset modules
+must not be hard-referenced from shared code that stays in the pack, or they
+will fail the check. Literal `erlang:apply(Mod, Fun, Args)` with constant
+module/fun atoms is usually rewritten by the compiler into a direct call, so
+the checker sees it the same way as a normal MFA.
+
 Orbital checks against AtomVM `0.7.0-beta.0` by default. On first use it
 downloads the official `funcs.txt`, `instructions.txt`, and `manifest.json`
 from the checksummed `atomvm` Hex package and caches them under
@@ -189,7 +201,11 @@ checks cannot discover function names constructed for dynamic `apply` calls.
   AtomVM implements a constrained subset of the Erlang's standard library, so if
   your Gleam code or dependencies use unsupported functions Orbital reports
   them during `check`, `build`, or `flash`. Calls assembled dynamically can
-  still produce an `undef` error at runtime.
+  still produce an `undef` error at runtime. Against the official
+  `0.7.0-beta.0` API, Gleam's `string.slice` / `string.uppercase` map to
+  `string:slice/3` and `string:uppercase/1`, which are not listed (AtomVM
+  exposes `string:to_upper/1` instead of `uppercase`). Prefer APIs that check
+  cleanly, or avoid pulling those stdlib paths into packed modules.
 
 - **What can I do to help?**
 

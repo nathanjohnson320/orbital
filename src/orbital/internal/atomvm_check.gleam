@@ -91,9 +91,12 @@ pub fn inspect_beam_files(
 }
 
 pub fn compare(beams: List(BeamInfo), entrypoint: String, api: Api) -> Report {
-  let exports =
+  // Packed locals and anonymous Gleam captures (fun Mod:Fun/Arity) live in
+  // beam.functions but are often not exported. Count every packed function
+  // name as available, plus the official / custom supported API.
+  let available =
     beams
-    |> list.flat_map(fn(beam) { beam.exports })
+    |> list.flat_map(fn(beam) { list.map(beam.functions, fn(f) { f.name }) })
     |> list.append(api.funcs)
     |> set.from_list
   let instructions = set.from_list(api.instructions)
@@ -104,7 +107,7 @@ pub fn compare(beams: List(BeamInfo), entrypoint: String, api: Api) -> Report {
   let function_pairs =
     list.flat_map(functions, fn(function) {
       function.calls
-      |> list.filter(fn(call) { !set.contains(exports, call) })
+      |> list.filter(fn(call) { !set.contains(available, call) })
       |> list.map(fn(call) { #(call, module_name(function.name)) })
     })
   let instruction_pairs =

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Compatibility checks treat every function defined on PackBEAM-retained
+  modules as available (locals and anonymous Gleam captures such as
+  `Mod:-name/1-anonymous-0-/1`), not only the BEAM export table. Gleam 1.19 /
+  OTP 28 `fun Mod:Fun/Arity` captures of private functions no longer false-fail
+  `check` / `build` / `flash`. Calls to modules pruned out of the AVM still fail
+  unless listed in `--supported-api` / `ATOMVM_SUPPORTED_API`.
 - Added PlayStation Portable support modeled on the Pico target:
   - `install psp` installs an AtomVM `EBOOT.PBP` into `PSP/GAME/ATOMVM/` on a
     PPSSPP memstick or USB Memory Stick (latest release, `--image`, or
