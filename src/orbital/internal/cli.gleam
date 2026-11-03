@@ -1338,7 +1338,10 @@ pub fn usage_text() -> Document {
     doc.line,
     command_line("  uf2create    ", "build a Pico UF2 from your project"),
     doc.line,
-    command_line("  info         ", "list connected ESP32 boards"),
+    command_line(
+      "  info         ",
+      "list connected AtomVM targets (ports and volumes)",
+    ),
     doc.line,
     command_line("  list         ", "list the contents of an 'avm' file"),
     doc.line,
@@ -1993,7 +1996,12 @@ pub fn info_help_text(description: Bool) -> Document {
     case description {
       False -> doc.empty
       True ->
-        "List connected ESP32 boards and whether AtomVM is installed on them."
+        {
+          "List connected AtomVM targets: ESP32 serial ports, Pico BOOTSEL "
+          <> "volumes, Pico USB serial, other USB serials, and a default PSP "
+          <> "path when present. Shows the --port / --pico-path / --psp-path "
+          <> "values to use for install, flash, and monitor."
+        }
         |> flex_text
         |> doc.append(doc.lines(2))
     },
