@@ -3,12 +3,27 @@ import gleam/string
 import gleeunit
 import gleeunit/should
 import orbital/internal/devices.{
-  PicoBootsel, Snapshot, UsbSerial, format_report,
+  PicoBootsel, Snapshot, UsbSerial, format_report, looks_like_pico_usb,
 }
 import orbital/internal/esp32
 
 pub fn main() -> Nil {
   gleeunit.main()
+}
+
+pub fn looks_like_pico_usb_accepts_pico_rejects_keyboardio_test() {
+  looks_like_pico_usb("/dev/cu.usbmodem83201", "Raspberry Pi Pico", "USB")
+  |> should.be_true
+  looks_like_pico_usb("/dev/cu.usbmodem1", "Board in FS mode / Raspberry Pi", "USB")
+  |> should.be_true
+  looks_like_pico_usb(
+    "/dev/cu.usbmodem6564BBBE13391",
+    "Keyboardio Model 100",
+    "USB",
+  )
+  |> should.be_false
+  looks_like_pico_usb("/dev/cu.usbmodem6564BBBE13391", "Model 100", "USB")
+  |> should.be_false
 }
 
 pub fn format_report_empty_hint_test() {
