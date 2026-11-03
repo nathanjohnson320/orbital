@@ -85,9 +85,10 @@ gleam run -m orbital flash pico
 ```
 
 Orbital packs the project, converts it to UF2 (`uf2tool`, default family
-`universal` for Pico and Pico 2), resets into BOOTSEL when a matching serial
-device is present, and copies the UF2 onto the mounted `RPI-RP2` / `RP2350`
-volume.
+`universal` for Pico and Pico 2), then loads it with `picotool` when available
+(works from application mode). Without picotool it resets into BOOTSEL when a
+matching serial device is present and copies the UF2 onto the mounted
+`RPI-RP2` / `RP2350` volume.
 
 ```sh
 gleam run -m orbital uf2create
