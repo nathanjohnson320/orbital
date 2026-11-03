@@ -42,7 +42,9 @@ gleam run -m orbital monitor
 gleam run -m orbital erase-flash
 ```
 
-`info` lists connected ESP32 boards and whether AtomVM is already installed.
+`info` lists connected AtomVM targets (ESP32 ports, Pico BOOTSEL volumes /
+USB serial, other USB serials, PSP path) and the `--port` / `--pico-path` /
+`--psp-path` values to use for install, flash, and monitor.
 
 `install` downloads the latest AtomVM release (or a local `--image` / release
 `--version`), erases flash, and writes the firmware. Use `--update` later to

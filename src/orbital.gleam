@@ -10,6 +10,7 @@ import gleam/string
 import gleam_community/ansi
 import orbital/internal/atomvm_check
 import orbital/internal/cli
+import orbital/internal/devices
 import orbital/internal/esp32
 import orbital/internal/executable.{type ExecutablePath}
 import orbital/internal/image_header
@@ -590,13 +591,7 @@ fn do_erase_flash(port: String) -> Result(String, Error) {
 }
 
 fn info() -> Nil {
-  case esp32.list_devices() {
-    Ok(devices) -> io.println(esp32.format_info_report(devices))
-    Error(error) -> {
-      io.println(error_to_string(Esp32HelperError(error)))
-      exit(1)
-    }
-  }
+  io.println(devices.report())
 }
 
 fn build(output_file: Option(String), supported_api: Option(String)) -> Nil {
