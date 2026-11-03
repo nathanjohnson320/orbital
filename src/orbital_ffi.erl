@@ -366,11 +366,12 @@ confirm(Prompt) ->
         eof -> false;
         {error, _} -> false;
         Line ->
-            case string:lowercase(string:trim(Line)) of
-                "y" -> true;
-                "yes" -> true;
-                _ -> false
-            end
+            %% get_line may return a list or a binary depending on OTP/io opts;
+            %% Gleam often runs with unicode, so answers arrive as binaries.
+            Answer = string:lowercase(
+                unicode:characters_to_binary(string:trim(Line))
+            ),
+            Answer =:= <<"y">> orelse Answer =:= <<"yes">>
     end.
 
 confirm_has_yn_hint(Prompt) when is_binary(Prompt) ->

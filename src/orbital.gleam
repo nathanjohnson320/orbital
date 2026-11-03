@@ -297,7 +297,10 @@ fn run_install(options: install.Options) -> Nil {
 fn run_pico_install(options: pico_install.Options) -> Nil {
   case pico_install.run(options) {
     Ok(Nil) -> Nil
-    Error(pico_install.Cancelled) -> exit(0)
+    Error(pico_install.Cancelled) -> {
+      io.println("Cancelled.")
+      exit(0)
+    }
     Error(error) -> {
       let message = pico_install.error_message(error)
       case message {
@@ -326,7 +329,10 @@ fn run_wasm_install(options: wasm_install.Options) -> Nil {
 fn run_psp_install(options: psp_install.Options) -> Nil {
   case psp_install.run(options) {
     Ok(Nil) -> Nil
-    Error(psp_install.Cancelled) -> exit(0)
+    Error(psp_install.Cancelled) -> {
+      io.println("Cancelled.")
+      exit(0)
+    }
     Error(error) -> {
       let message = psp_install.error_message(error)
       case message {

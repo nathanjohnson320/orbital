@@ -1,7 +1,12 @@
 //// Serial console for `gleam run -m orbital monitor`.
 ////
-//// Uses the orbital_serial NIF. Reset order matches ExAtomVM: assert RTS+DTR
-//// after open, release RTS then DTR, optionally pulse RTS for the boot log.
+//// Uses the orbital_serial NIF.
+////
+//// ESP32 (UART): ExAtomVM reset order — assert RTS+DTR after open, release
+//// RTS then DTR, optionally pulse RTS for the boot log.
+////
+//// Pico (USB CDC): leave DTR asserted. Pico SDK treats DTR as "host
+//// connected"; clearing it makes AtomVM skip the USB console.
 ////
 //// Port auto-detect:
 //// - single USB serial → use it (ESP32 or Pico)
@@ -45,7 +50,7 @@ pub fn run(
 ) -> Result(Nil, String) {
   use resolved <- result.try(resolve_port(target, port))
   io.println_error("Serial port " <> resolved)
-  read_console(resolved, baud, reset, timeout_seconds)
+  read_console(resolved, baud, reset, timeout_seconds, target)
 }
 
 fn resolve_port(target: Target, port: String) -> Result(String, String) {
@@ -165,25 +170,27 @@ fn read_console(
   baud: Int,
   reset: Bool,
   timeout_seconds: Int,
+  target: Target,
 ) -> Result(Nil, String) {
   let deadline: Option(Int) = case timeout_seconds {
     0 -> None
     seconds -> Some(monotonic_time_ms() + seconds * 1000)
   }
 
-  case open_configured(port_name, baud) {
+  case open_configured(port_name, baud, target) {
     Error(reason) -> Error(reason)
     Ok(port) -> {
-      case reset {
-        True -> {
+      case reset, target {
+        // RTS pulse is for ESP32 UART reset; on Pico it only drops CDC DTR.
+        True, Esp32 | True, Auto -> {
           set_rts_line(port, True, False)
           sleep_ms(100)
           set_rts_line(port, False, False)
         }
-        False -> Nil
+        True, Pico | False, _ -> Nil
       }
       let #(at_line_start, _) =
-        console_loop(port, port_name, baud, deadline, True, <<>>)
+        console_loop(port, port_name, baud, deadline, True, <<>>, target)
       let _ = ensure_newline(at_line_start)
       close(port)
       Ok(Nil)
@@ -191,13 +198,34 @@ fn read_console(
   }
 }
 
-fn open_configured(port_name: String, baud: Int) -> Result(SerialPort, String) {
+fn open_configured(
+  port_name: String,
+  baud: Int,
+  target: Target,
+) -> Result(SerialPort, String) {
   use port <- result.try(open(port_name, baud))
-  set_rts_line(port, True, True)
-  set_dtr(port, True)
-  set_rts_line(port, False, True)
-  set_dtr(port, False)
-  Ok(port)
+  case target {
+    Pico -> {
+      // pico-sdk stdio_usb_connected() / tud_cdc_connected() follows DTR.
+      set_dtr(port, True)
+      Ok(port)
+    }
+    Esp32 -> {
+      set_rts_line(port, True, True)
+      set_dtr(port, True)
+      set_rts_line(port, False, True)
+      set_dtr(port, False)
+      Ok(port)
+    }
+    // Auto may be Pico CDC — keep DTR up so stdio_usb_connected() stays true.
+    Auto -> {
+      set_rts_line(port, True, True)
+      set_dtr(port, True)
+      set_rts_line(port, False, True)
+      set_dtr(port, True)
+      Ok(port)
+    }
+  }
 }
 
 /// On Windows, rewrite DTR after RTS so usbser.sys applies the lines.
@@ -216,6 +244,7 @@ fn console_loop(
   deadline: Option(Int),
   at_line_start: Bool,
   pending: BitArray,
+  target: Target,
 ) -> #(Bool, BitArray) {
   case expired(deadline) {
     True -> #(at_line_start, pending)
@@ -231,19 +260,36 @@ fn console_loop(
             deadline,
             next_start,
             next_pending,
+            target,
           )
         }
         TimedOut ->
-          console_loop(port, port_name, baud, deadline, at_line_start, pending)
+          console_loop(
+            port,
+            port_name,
+            baud,
+            deadline,
+            at_line_start,
+            pending,
+            target,
+          )
         PortGone | Failed(_) -> {
           let _ = ensure_newline(at_line_start)
           write_stdout("Waiting for the board to reconnect")
           close(port)
-          case wait_reconnect(port_name, baud, deadline) {
+          case wait_reconnect(port_name, baud, deadline, target) {
             Error(Nil) -> #(True, <<>>)
             Ok(new_port) -> {
               write_stdout("\n")
-              console_loop(new_port, port_name, baud, deadline, True, <<>>)
+              console_loop(
+                new_port,
+                port_name,
+                baud,
+                deadline,
+                True,
+                <<>>,
+                target,
+              )
             }
           }
         }
@@ -255,16 +301,17 @@ fn wait_reconnect(
   port_name: String,
   baud: Int,
   deadline: Option(Int),
+  target: Target,
 ) -> Result(SerialPort, Nil) {
   case expired(deadline) {
     True -> Error(Nil)
     False -> {
       sleep_ms(500)
-      case open_configured(port_name, baud) {
+      case open_configured(port_name, baud, target) {
         Ok(port) -> Ok(port)
         Error(_) -> {
           write_stdout(".")
-          wait_reconnect(port_name, baud, deadline)
+          wait_reconnect(port_name, baud, deadline, target)
         }
       }
     }
