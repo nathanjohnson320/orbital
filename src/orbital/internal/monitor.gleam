@@ -88,27 +88,33 @@ fn resolve_auto(target: Target) -> Result(String, String) {
       }
 
     Auto, many ->
-      case esp32.list_devices() {
-        Ok([device]) -> Ok(device.port)
-        Ok([]) ->
-          case list.filter(many, is_pico_port_info) {
-            [only] -> Ok(only.name)
-            [] ->
-              Error(
-                "Several serial ports found, none look like a Pico:\n"
-                <> port_lines(many)
-                <> "\nPass a platform (esp32 or pico) or --port.",
-              )
-            _ ->
-              Error(
-                "Several serial ports found:\n"
-                <> port_lines(many)
-                <> "\nPass a platform (esp32 or pico) or --port.",
-              )
+      // Prefer a clear Pico CDC match before probing ESP32 — ESP rom-stub
+      // connect on an ACM keyboard (etc.) used to hang bare `monitor`.
+      case list.filter(many, is_pico_port_info) {
+        [only] -> Ok(only.name)
+        pico_candidates ->
+          case esp32.list_devices() {
+            Ok([device]) -> Ok(device.port)
+            Ok([]) ->
+              case pico_candidates {
+                [] ->
+                  Error(
+                    "Several serial ports found, none look like a Pico:\n"
+                    <> port_lines(many)
+                    <> "\nPass a platform (esp32 or pico) or --port.",
+                  )
+                _ ->
+                  Error(
+                    "Several serial ports found:\n"
+                    <> port_lines(many)
+                    <> "\nPass a platform (esp32 or pico) or --port.",
+                  )
+              }
+            Ok(_) ->
+              Error("Several ESP32 devices found.\nPass one with --port.")
+            Error(esp32.ToolingMissing(reason)) -> Error(reason)
+            Error(esp32.DeviceError(reason)) -> Error(reason)
           }
-        Ok(_) -> Error("Several ESP32 devices found.\nPass one with --port.")
-        Error(esp32.ToolingMissing(reason)) -> Error(reason)
-        Error(esp32.DeviceError(reason)) -> Error(reason)
       }
   }
 }
@@ -124,14 +130,9 @@ fn select_esp32_port() -> Result(String, String) {
 }
 
 fn select_pico_port(serials: List(PortInfo)) -> Result(String, String) {
-  let esp_ports = case esp32.list_devices() {
-    Ok(devices) -> list.map(devices, fn(device) { device.port })
-    Error(_) -> []
-  }
-  let candidates =
-    list.filter(serials, fn(info) {
-      !list.contains(esp_ports, info.name) && is_pico_port_info(info)
-    })
+  // Match Pico CDC by description / name only. Do not ESP-probe every ACM
+  // device — that blocks when a Keyboardio (or similar) is plugged in.
+  let candidates = list.filter(serials, is_pico_port_info)
   case candidates {
     [only] -> Ok(only.name)
     [] ->
@@ -247,7 +248,9 @@ fn open_configured(
   baud: Int,
   target: Target,
 ) -> Result(SerialPort, String) {
-  use port <- result.try(open(port_name, baud))
+  // After picotool flash/reboot the CDC path briefly returns SP_ERR_ARG until
+  // macOS re-enumerates the interface — retry instead of failing immediately.
+  use port <- result.try(open_with_retry(port_name, baud, 0))
   case target {
     Pico -> {
       // pico-sdk stdio_usb_connected() / tud_cdc_connected() follows DTR.
@@ -269,6 +272,24 @@ fn open_configured(
       set_dtr(port, True)
       Ok(port)
     }
+  }
+}
+
+fn open_with_retry(
+  port_name: String,
+  baud: Int,
+  attempt: Int,
+) -> Result(SerialPort, String) {
+  case open(port_name, baud) {
+    Ok(port) -> Ok(port)
+    Error(reason) ->
+      case attempt < 10 {
+        True -> {
+          sleep_ms(300)
+          open_with_retry(port_name, baud, attempt + 1)
+        }
+        False -> Error(reason)
+      }
   }
 }
 

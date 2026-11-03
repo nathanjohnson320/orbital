@@ -291,12 +291,15 @@ fn picotool_load(tool: String, uf2_path: String) -> Result(Nil, Error) {
   case run_named_executable(tool, ["load", "-f", uf2_path]) {
     Ok(0) -> {
       let _ = run_named_executable(tool, ["reboot", "-f", "-a"])
+      // Give USB CDC time to re-enumerate before a follow-up `monitor`.
+      process.sleep(1500)
       Ok(Nil)
     }
     Ok(_) ->
       case run_named_executable(tool, ["load", uf2_path]) {
         Ok(0) -> {
           let _ = run_named_executable(tool, ["reboot", "-f", "-a"])
+          process.sleep(1500)
           Ok(Nil)
         }
         Ok(code) ->
