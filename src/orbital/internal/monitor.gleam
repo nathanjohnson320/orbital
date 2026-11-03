@@ -20,6 +20,7 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
+import orbital/internal/devices
 import orbital/internal/esp32
 
 pub type SerialPort
@@ -63,17 +64,9 @@ fn resolve_port(target: Target, port: String) -> Result(String, String) {
 fn resolve_auto(target: Target) -> Result(String, String) {
   use serials <- result.try(usb_ports())
   case target, serials {
-    _, [only] -> Ok(only.name)
-
     Esp32, _ -> select_esp32_port()
 
-    Pico, [] ->
-      Error(
-        "No serial port found.\n"
-        <> "Hold BOOT, tap RESET, release BOOT, and try again.",
-      )
-
-    Pico, many -> select_pico_port(many)
+    Pico, _ -> select_pico_port(serials)
 
     Auto, [] ->
       Error(
@@ -81,15 +74,38 @@ fn resolve_auto(target: Target) -> Result(String, String) {
         <> "Hold BOOT, tap RESET, release BOOT, and try again.",
       )
 
+    Auto, [only] ->
+      case acceptable_auto_port(only) {
+        True -> Ok(only.name)
+        False ->
+          Error(
+            "USB serial "
+            <> only.name
+            <> " does not look like an ESP32 or Pico.\n"
+            <> description_line(only)
+            <> "Pass a platform (esp32 or pico) or --port, or unplug other USB serial devices.",
+          )
+      }
+
     Auto, many ->
       case esp32.list_devices() {
         Ok([device]) -> Ok(device.port)
         Ok([]) ->
-          Error(
-            "Several serial ports found:\n"
-            <> port_lines(many)
-            <> "\nPass a platform (esp32 or pico) or --port.",
-          )
+          case list.filter(many, is_pico_port_info) {
+            [only] -> Ok(only.name)
+            [] ->
+              Error(
+                "Several serial ports found, none look like a Pico:\n"
+                <> port_lines(many)
+                <> "\nPass a platform (esp32 or pico) or --port.",
+              )
+            _ ->
+              Error(
+                "Several serial ports found:\n"
+                <> port_lines(many)
+                <> "\nPass a platform (esp32 or pico) or --port.",
+              )
+          }
         Ok(_) -> Error("Several ESP32 devices found.\nPass one with --port.")
         Error(esp32.ToolingMissing(reason)) -> Error(reason)
         Error(esp32.DeviceError(reason)) -> Error(reason)
@@ -113,25 +129,53 @@ fn select_pico_port(serials: List(PortInfo)) -> Result(String, String) {
     Error(_) -> []
   }
   let candidates =
-    list.filter(serials, fn(info) { !list.contains(esp_ports, info.name) })
+    list.filter(serials, fn(info) {
+      !list.contains(esp_ports, info.name) && is_pico_port_info(info)
+    })
   case candidates {
     [only] -> Ok(only.name)
     [] ->
       Error(
-        "No Pico serial port found.\n" <> "Unplug other boards, or pass --port.",
+        "No Pico serial port found.\n"
+        <> "If the board is in BOOTSEL, leave BOOTSEL so AtomVM can enumerate USB serial.\n"
+        <> "Otherwise unplug other boards, or pass --port.",
       )
     many ->
       Error(
-        "Several serial ports found:\n"
+        "Several Pico serial ports found:\n"
         <> port_lines(many)
         <> "\nPass one with --port.",
       )
   }
 }
 
+fn acceptable_auto_port(info: PortInfo) -> Bool {
+  is_pico_port_info(info)
+  || case esp32.list_devices() {
+    Ok(devices) -> list.any(devices, fn(device) { device.port == info.name })
+    Error(_) -> False
+  }
+}
+
+fn is_pico_port_info(info: PortInfo) -> Bool {
+  devices.looks_like_pico_usb(info.name, info.description, info.transport)
+}
+
+fn description_line(info: PortInfo) -> String {
+  case string.trim(info.description) {
+    "" -> ""
+    description -> "Description: " <> description <> "\n"
+  }
+}
+
 fn port_lines(ports: List(PortInfo)) -> String {
   ports
-  |> list.map(fn(info) { "  " <> info.name })
+  |> list.map(fn(info) {
+    case string.trim(info.description) {
+      "" -> "  " <> info.name
+      description -> "  " <> info.name <> "  (" <> description <> ")"
+    }
+  })
   |> string.join("\n")
 }
 

@@ -274,8 +274,17 @@ fn detect_psp_path() -> Option(String) {
 }
 
 fn is_pico_serial(info: PortInfo) -> Bool {
-  let blob =
-    string.lowercase(info.name <> " " <> info.description <> " " <> info.transport)
+  looks_like_pico_usb(info.name, info.description, info.transport)
+}
+
+/// True when a USB serial description looks like a Pico / AtomVM CDC device
+/// (not a random ACM gadget such as a Keyboardio).
+pub fn looks_like_pico_usb(
+  name: String,
+  description: String,
+  transport: String,
+) -> Bool {
+  let blob = string.lowercase(name <> " " <> description <> " " <> transport)
   list.any(
     ["pico", "raspberry", "atomvm", "rp2040", "rp2350", "rpi-rp2"],
     fn(token) { string.contains(blob, token) },
