@@ -357,17 +357,30 @@ wildcard(Pattern) ->
     ].
 
 confirm(Prompt) ->
-    io:put_chars(Prompt),
+    Hint = case confirm_has_yn_hint(Prompt) of
+        true -> <<>>;
+        false -> <<" [y/n] ">>
+    end,
+    io:put_chars([Prompt, Hint]),
     case io:get_line("") of
         eof -> false;
         {error, _} -> false;
         Line ->
-            case string:trim(Line) of
-                "Y" -> true;
+            case string:lowercase(string:trim(Line)) of
                 "y" -> true;
+                "yes" -> true;
                 _ -> false
             end
     end.
+
+confirm_has_yn_hint(Prompt) when is_binary(Prompt) ->
+    Lower = string:lowercase(Prompt),
+    lists:any(
+        fun(Token) -> binary:match(Lower, Token) =/= nomatch end,
+        [<<"[y/n]">>, <<"[n/y]">>, <<"[y/N]">>, <<"[N/y]">>]
+    );
+confirm_has_yn_hint(Prompt) ->
+    confirm_has_yn_hint(unicode:characters_to_binary(Prompt)).
 
 %% List member names inside a zip (OTP zip, memory mode).
 
