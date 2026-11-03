@@ -112,10 +112,7 @@ fn empty_hint() -> String {
 fn format_esp32_section(result: Result(List(esp32.Device), String)) -> String {
   case result {
     Error(reason) ->
-      "ESP32\n"
-      <> "  (could not probe ESP32 devices: "
-      <> reason
-      <> ")"
+      "ESP32\n" <> "  (could not probe ESP32 devices: " <> reason <> ")"
     Ok([]) -> ""
     Ok(devices) -> {
       let blocks =
