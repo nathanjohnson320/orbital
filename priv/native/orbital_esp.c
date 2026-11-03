@@ -217,10 +217,21 @@ session_close(esp_session *session)
 }
 
 static esp_loader_error_t
-session_open(esp_session *session, const char *device, uint32_t baud, int with_stub)
+session_open(
+    esp_session *session,
+    const char *device,
+    uint32_t baud,
+    int with_stub,
+    int quick_probe)
 {
     esp_loader_error_t err;
     esp_loader_connect_args_t args = ESP_LOADER_CONNECT_DEFAULT();
+
+    if (quick_probe) {
+        /* Keep `orbital info` snappy when a non-ESP ACM device is present. */
+        args.sync_timeout = 50;
+        args.trials = 3;
+    }
 
     memset(session, 0, sizeof(*session));
     session->port.port.ops = &libserialport_uart_ops;
@@ -277,6 +288,61 @@ is_usb_candidate(struct sp_port *port, const char *os_family)
         }
     }
     return 1;
+}
+
+/* True when a USB serial is worth an ESP32 rom-stub probe. Skip Pico CDC,
+ * keyboards, and other ACM gadgets — probing them blocks `orbital info`. */
+static int
+is_esp_probe_candidate(struct sp_port *port, const char *os_family)
+{
+    int vid = 0;
+    int pid = 0;
+    const char *desc;
+    const char *mfg;
+    char blob[512];
+    size_t i;
+
+    if (!is_usb_candidate(port, os_family)) {
+        return 0;
+    }
+    if (sp_get_port_usb_vid_pid(port, &vid, &pid) != SP_OK) {
+        vid = 0;
+    }
+
+    switch (vid) {
+    case 0x303A: /* Espressif */
+    case 0x10C4: /* Silicon Labs CP210x */
+    case 0x1A86: /* WCH CH340/CH9102 */
+    case 0x0403: /* FTDI */
+    case 0x067B: /* Prolific */
+        return 1;
+    case 0x2E8A: /* Raspberry Pi Pico / RP2 */
+    case 0x3496: /* Keyboardio */
+        return 0;
+    default:
+        break;
+    }
+
+    desc = sp_get_port_description(port);
+    mfg = sp_get_port_usb_manufacturer(port);
+    snprintf(
+        blob,
+        sizeof(blob),
+        "%s %s",
+        desc != NULL ? desc : "",
+        mfg != NULL ? mfg : "");
+    for (i = 0; blob[i] != '\0'; i++) {
+        if (blob[i] >= 'A' && blob[i] <= 'Z') {
+            blob[i] = (char)(blob[i] - 'A' + 'a');
+        }
+    }
+    if (strstr(blob, "espressif") != NULL || strstr(blob, "cp210") != NULL
+        || strstr(blob, "ch340") != NULL || strstr(blob, "ch910") != NULL
+        || strstr(blob, "ftdi") != NULL || strstr(blob, "silicon labs") != NULL
+        || strstr(blob, "usbserial") != NULL || strstr(blob, "usb-serial") != NULL) {
+        return 1;
+    }
+    return 0;
 }
 
 static void
@@ -547,7 +613,7 @@ nif_list_devices(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
             int atomvm;
             target_chip_t chip;
 
-            if (!is_usb_candidate(ports[i], os_family)) {
+            if (!is_esp_probe_candidate(ports[i], os_family)) {
                 continue;
             }
             name = sp_get_port_name(ports[i]);
@@ -555,7 +621,7 @@ nif_list_devices(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
                 continue;
             }
 
-            err = session_open(&session, name, DEFAULT_BAUD, 1);
+            err = session_open(&session, name, DEFAULT_BAUD, 1, 1);
             if (err != ESP_LOADER_SUCCESS) {
                 continue;
             }
@@ -736,7 +802,7 @@ nif_erase_flash(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
         return make_error_bin(env, "port must be a non-empty string");
     }
 
-    err = session_open(&session, port, DEFAULT_BAUD, 1);
+    err = session_open(&session, port, DEFAULT_BAUD, 1, 0);
     if (err != ESP_LOADER_SUCCESS) {
         return make_error_bin(env, loader_error_str(err));
     }
@@ -787,7 +853,7 @@ nif_read_flash(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
         return make_error_bin(env, "out of memory");
     }
 
-    err = session_open(&session, port, DEFAULT_BAUD, 1);
+    err = session_open(&session, port, DEFAULT_BAUD, 1, 0);
     if (err != ESP_LOADER_SUCCESS) {
         free(buf);
         return make_error_bin(env, loader_error_str(err));
@@ -843,7 +909,7 @@ nif_write_flash_data(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
         return make_error_bin(env, "could not read flash payload file");
     }
 
-    err = session_open(&session, port, (uint32_t)baud, 1);
+    err = session_open(&session, port, (uint32_t)baud, 1, 0);
     if (err != ESP_LOADER_SUCCESS) {
         free(data);
         return make_error_bin(env, loader_error_str(err));
@@ -890,7 +956,7 @@ nif_write_flash_parts(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
         return make_error_bin(env, "parts must be a list of {address, path}");
     }
 
-    err = session_open(&session, port, (uint32_t)baud, 1);
+    err = session_open(&session, port, (uint32_t)baud, 1, 0);
     if (err != ESP_LOADER_SUCCESS) {
         return make_error_bin(env, loader_error_str(err));
     }

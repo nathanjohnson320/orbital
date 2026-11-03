@@ -14,7 +14,11 @@ pub fn main() -> Nil {
 pub fn looks_like_pico_usb_accepts_pico_rejects_keyboardio_test() {
   looks_like_pico_usb("/dev/cu.usbmodem83201", "Raspberry Pi Pico", "USB")
   |> should.be_true
-  looks_like_pico_usb("/dev/cu.usbmodem1", "Board in FS mode / Raspberry Pi", "USB")
+  looks_like_pico_usb(
+    "/dev/cu.usbmodem1",
+    "Board in FS mode / Raspberry Pi",
+    "USB",
+  )
   |> should.be_true
   looks_like_pico_usb(
     "/dev/cu.usbmodem6564BBBE13391",
@@ -67,9 +71,7 @@ pub fn format_report_pico_bootsel_commands_test() {
   |> string.contains("/Volumes/RP2350")
   |> should.be_true
   report
-  |> string.contains(
-    "install pico --board pico2 --pico-path /Volumes/RP2350",
-  )
+  |> string.contains("install pico --board pico2 --pico-path /Volumes/RP2350")
   |> should.be_true
   report
   |> string.contains("flash pico --pico-path /Volumes/RP2350")

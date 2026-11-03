@@ -200,10 +200,33 @@ pub fn create_uf2(
   |> result.map_error(CannotCreateUf2)
 }
 
-/// Flash a UF2 onto a mounted Pico volume, resetting into BOOTSEL when needed.
+/// Flash a UF2: prefer `picotool load -f` (works from app mode), else BOOTSEL
+/// volume copy after an optional serial reset.
 pub fn flash_uf2(
   uf2_path uf2_path: String,
   options options: FlashOptions,
+) -> Result(Nil, Error) {
+  let picotool = resolve_picotool(options.picotool)
+  case picotool {
+    Some(tool) ->
+      case picotool_load(tool, uf2_path) {
+        Ok(Nil) -> Ok(Nil)
+        Error(error) -> {
+          io.println(
+            "picotool load failed ("
+            <> error_message(error)
+            <> "); falling back to UF2 volume copy…",
+          )
+          flash_via_mount(uf2_path, options)
+        }
+      }
+    None -> flash_via_mount(uf2_path, options)
+  }
+}
+
+fn flash_via_mount(
+  uf2_path: String,
+  options: FlashOptions,
 ) -> Result(Nil, Error) {
   let pico_path = resolve_pico_path(options.pico_path)
   let pico_reset = resolve_pico_reset(options.pico_reset)
@@ -262,14 +285,21 @@ fn install_via_mount(
 
 fn picotool_load(tool: String, uf2_path: String) -> Result(Nil, Error) {
   io.println("Loading " <> filepath.base_name(uf2_path) <> " with picotool…")
-  // `-f` resets a running compatible device into BOOTSEL, loads, then returns
-  // it to application mode. Virgin BOOTSEL devices accept load without `-f`.
+  // `-f` resets a running compatible device into BOOTSEL and loads. Always
+  // follow with reboot to application mode — some picotool builds leave the
+  // board in BOOTSEL after a successful load.
   case run_named_executable(tool, ["load", "-f", uf2_path]) {
-    Ok(0) -> Ok(Nil)
+    Ok(0) -> {
+      let _ = run_named_executable(tool, ["reboot", "-f", "-a"])
+      // Give USB CDC time to re-enumerate before a follow-up `monitor`.
+      process.sleep(1500)
+      Ok(Nil)
+    }
     Ok(_) ->
       case run_named_executable(tool, ["load", uf2_path]) {
         Ok(0) -> {
           let _ = run_named_executable(tool, ["reboot", "-f", "-a"])
+          process.sleep(1500)
           Ok(Nil)
         }
         Ok(code) ->
@@ -301,7 +331,12 @@ pub fn error_message(error: Error) -> String {
     MountTimeout(path:) ->
       "Timed out waiting for the Pico to mount at '" <> path <> "'."
     MountNotDirectory(path:) ->
-      "Object found at pico mount path '" <> path <> "' is not a directory."
+      "Object found at pico mount path '"
+      <> path
+      <> "' is not a directory.\n"
+      <> "After install the board leaves BOOTSEL, so that path is often a stale "
+      <> "stub. Hold BOOT and tap RESET (or unplug/replug with BOOT held), or "
+      <> "install picotool so `flash pico` can load over USB without a mount."
     ResetFailed(reason:) ->
       "I couldn't reset the Pico into BOOTSEL mode.\n" <> reason
     CannotCopyUf2(_) -> "I couldn't copy the UF2 file onto the Pico mount."

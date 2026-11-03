@@ -200,12 +200,8 @@ open_port(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
         return sp_error_term(env, rc);
     }
 
-    rc = sp_set_baudrate(port, baud);
-    if (rc != SP_OK) {
-        sp_close(port);
-        sp_free_port(port);
-        return sp_error_term(env, rc);
-    }
+    /* USB CDC (Pico, etc.) may reject baud; the link is still usable. */
+    (void)sp_set_baudrate(port, baud);
     (void)sp_set_bits(port, 8);
     (void)sp_set_parity(port, SP_PARITY_NONE);
     (void)sp_set_stopbits(port, 1);
