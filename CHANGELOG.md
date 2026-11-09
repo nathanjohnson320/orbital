@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `flash psp` / `install psp` patch the installed `EBOOT.PBP` PARAM.SFO `TITLE`
+  to the Gleam package name (or `--title`), so PPSSPP / XMB shows the project
+  instead of the prebuilt `AtomVM-PSP` label. The game folder remains
+  `PSP/GAME/ATOMVM/`.
 - Compatibility checks treat every function defined on PackBEAM-retained
   modules as available (locals and anonymous Gleam captures such as
   `Mod:-name/1-anonymous-0-/1`), not only the BEAM export table. Gleam 1.19 /

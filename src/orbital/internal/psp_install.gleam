@@ -5,6 +5,7 @@ import gleam/io
 import gleam/option.{type Option, None, Some, unwrap}
 import gleam/result
 import gleam_community/ansi
+import orbital/internal/project
 import orbital/internal/psp
 import orbital/internal/psp_firmware
 import simplifile
@@ -18,6 +19,8 @@ pub type Options {
     list_images: Bool,
     psp_path: Option(String),
     game_dir: Option(String),
+    /// Overrides gleam.toml package name for EBOOT PARAM.SFO `TITLE`.
+    title: Option(String),
   )
 }
 
@@ -86,10 +89,15 @@ fn do_install(options: Options) -> Result(Nil, Error) {
       )
   })
   use Nil <- result.try(confirm(image, options))
+  let title = resolve_pbp_title(options.title)
   use game_path <- result.try(
     psp.install_eboot(
       path,
-      psp.InstallOptions(psp_path: options.psp_path, game_dir: options.game_dir),
+      psp.InstallOptions(
+        psp_path: options.psp_path,
+        game_dir: options.game_dir,
+        title:,
+      ),
     )
     |> result.map_error(Device),
   )
@@ -103,6 +111,19 @@ fn do_install(options: Options) -> Result(Nil, Error) {
   io.println("  gleam run -m orbital flash psp")
   io.println("")
   Ok(Nil)
+}
+
+/// Prefer `--title`, else the Gleam package name when run inside a project.
+/// Outside a Gleam project with no override, leave the stock EBOOT title.
+fn resolve_pbp_title(override: Option(String)) -> Option(String) {
+  case override {
+    Some(title) -> Some(title)
+    None ->
+      case project.load() {
+        Ok(project) -> Some(project.name)
+        Error(_) -> None
+      }
+  }
 }
 
 fn resolve(options: Options) -> Result(psp_firmware.Image, Error) {
