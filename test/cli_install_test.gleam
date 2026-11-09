@@ -190,6 +190,7 @@ pub fn install_psp_defaults_test() {
     list_images: False,
     psp_path: None,
     game_dir: None,
+    title: None,
     help: False,
   )) = cli.parse(["install", "psp"])
 }
@@ -203,6 +204,7 @@ pub fn install_psp_image_defaults_test() {
     list_images: False,
     psp_path:,
     game_dir:,
+    title:,
     help: False,
   )) = cli.parse(["install", "psp", "--image", "./EBOOT.PBP"])
 
@@ -211,6 +213,7 @@ pub fn install_psp_image_defaults_test() {
   assert repo == None
   assert psp_path == None
   assert game_dir == None
+  assert title == None
 }
 
 pub fn install_psp_flags_test() {
@@ -221,6 +224,7 @@ pub fn install_psp_flags_test() {
     list_images: False,
     psp_path:,
     game_dir:,
+    title:,
     ..,
   )) =
     cli.parse([
@@ -233,11 +237,14 @@ pub fn install_psp_flags_test() {
       "~/.config/ppsspp/PSP/GAME/ATOMVM",
       "--game-dir",
       "ATOMVM",
+      "--title",
+      "My Game",
     ])
 
   assert image == Some("./EBOOT.PBP")
   assert psp_path == Some("~/.config/ppsspp/PSP/GAME/ATOMVM")
   assert game_dir == Some("ATOMVM")
+  assert title == Some("My Game")
 }
 
 pub fn install_psp_list_images_test() {

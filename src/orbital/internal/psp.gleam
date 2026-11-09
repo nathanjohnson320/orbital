@@ -8,6 +8,7 @@ import gleam/io
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
+import orbital/internal/psp_pbp
 import simplifile
 
 pub const default_game_dir = "ATOMVM"
@@ -17,11 +18,21 @@ pub const default_app_avm = "app.avm"
 pub const default_eboot = "EBOOT.PBP"
 
 pub type FlashOptions {
-  FlashOptions(psp_path: Option(String), game_dir: Option(String))
+  FlashOptions(
+    psp_path: Option(String),
+    game_dir: Option(String),
+    /// Display title written into EBOOT PARAM.SFO `TITLE`.
+    title: Option(String),
+  )
 }
 
 pub type InstallOptions {
-  InstallOptions(psp_path: Option(String), game_dir: Option(String))
+  InstallOptions(
+    psp_path: Option(String),
+    game_dir: Option(String),
+    /// When set, patch EBOOT PARAM.SFO `TITLE` after copy.
+    title: Option(String),
+  )
 }
 
 pub type Error {
@@ -33,6 +44,7 @@ pub type Error {
   CannotCopyEboot(reason: simplifile.FileError)
   CannotCopyAvm(reason: simplifile.FileError)
   CannotWriteAvm(path: String, reason: simplifile.FileError)
+  Pbp(psp_pbp.Error)
 }
 
 pub fn error_message(error: Error) -> String {
@@ -58,6 +70,7 @@ pub fn error_message(error: Error) -> String {
     CannotCopyEboot(_) -> "I couldn't copy EBOOT.PBP into the PSP game folder."
     CannotCopyAvm(_) -> "I couldn't copy app.avm into the PSP game folder."
     CannotWriteAvm(path:, ..) -> "I couldn't write '" <> path <> "'."
+    Pbp(reason) -> psp_pbp.error_message(reason)
   }
 }
 
@@ -188,10 +201,14 @@ pub fn install_eboot(
     |> result.map_error(CannotCopyEboot),
   )
   io.println("Installed " <> default_eboot <> " → " <> dest)
+  use Nil <- result.try(maybe_set_eboot_title(game_path, options.title))
   Ok(game_path)
 }
 
 /// Copy a project AVM to `app.avm` beside the installed EBOOT.
+///
+/// When `options.title` is set, patches `EBOOT.PBP` PARAM.SFO `TITLE` after
+/// confirming the game folder is installed (before copying the AVM).
 pub fn flash_avm(
   avm_path: String,
   options: FlashOptions,
@@ -201,6 +218,7 @@ pub fn flash_avm(
     options.game_dir,
   ))
   use Nil <- result.try(require_installed_game_dir(game_path))
+  use Nil <- result.try(maybe_set_eboot_title(game_path, options.title))
   let dest = filepath.join(game_path, default_app_avm)
   use Nil <- result.try(
     simplifile.copy(src: avm_path, dest:)
@@ -208,6 +226,19 @@ pub fn flash_avm(
   )
   io.println("Flashed " <> default_app_avm <> " → " <> dest)
   Ok(dest)
+}
+
+fn maybe_set_eboot_title(
+  game_path: String,
+  title: Option(String),
+) -> Result(Nil, Error) {
+  case title {
+    None -> Ok(Nil)
+    Some(title) ->
+      psp_pbp.set_game_eboot_title(game_path, title)
+      |> result.map(fn(_) { Nil })
+      |> result.map_error(Pbp)
+  }
 }
 
 fn strip_trailing_slashes(path: String) -> String {

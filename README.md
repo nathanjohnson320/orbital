@@ -100,7 +100,10 @@ gleam run -m orbital flash pico --pico-path /Volumes/RPI-RP2 --family-id data
 AtomVM on PSP is a homebrew `EBOOT.PBP` (from
 [atomvm-psp](https://github.com/nathanjohnson320/atomvm-psp)), not MCU firmware.
 Install the EBOOT once into `PSP/GAME/ATOMVM/`, then flash your Gleam app as
-`app.avm` beside it (ms0 load / hot-swap).
+`app.avm` beside it (ms0 load / hot-swap). The game folder stays `ATOMVM`
+(AtomVM loads `ms0:/PSP/GAME/ATOMVM/app.avm`); Orbital patches the EBOOT
+`PARAM.SFO` `TITLE` so PPSSPP / the XMB lists your Gleam package name instead of
+the prebuilt `AtomVM-PSP` label.
 
 ```sh
 gleam run -m orbital install psp --list-images
@@ -108,16 +111,19 @@ gleam run -m orbital install psp
 gleam run -m orbital install psp --image /path/to/EBOOT.PBP
 gleam run -m orbital flash psp
 gleam run -m orbital flash psp --psp-path ~/.config/ppsspp/PSP/GAME/ATOMVM
+gleam run -m orbital flash psp --title "My Game"
 ```
 
 `install psp` downloads the latest atomvm-psp release EBOOT (or a local
 `--image` / `--version`). Default `--psp-path` is the PPSSPP memstick
 `GAME/ATOMVM` folder when present; otherwise pass `--psp-path` to a Memory Stick
-root or the `ATOMVM` game directory.
+root or the `ATOMVM` game directory. When run inside a Gleam project it also sets
+the EBOOT `TITLE` to the `gleam.toml` package name (or `--title`).
 
-`flash psp` builds and checks your project AVM, then copies it to
-`app.avm` next to the installed EBOOT. Extra `*.avm` files in that folder can be
-hot-swapped from AtomVM's on-device picker after `start/0` returns.
+`flash psp` builds and checks your project AVM, sets the EBOOT `TITLE` from the
+package name (override with `--title`), then copies the AVM to `app.avm` next to
+the installed EBOOT. Extra `*.avm` files in that folder can be hot-swapped from
+AtomVM's on-device picker after `start/0` returns.
 
 ### WebAssembly (Emscripten)
 

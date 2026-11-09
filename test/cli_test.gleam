@@ -344,15 +344,16 @@ pub fn install_wasm_rejects_image_and_version_test() {
 pub fn psp_flash_defaults_test() {
   let assert Ok(Flash(platform:, help: False)) = cli.parse(["flash", "psp"])
 
-  let assert Psp(psp_path:, game_dir:, supported_api:) = platform
+  let assert Psp(psp_path:, game_dir:, title:, supported_api:) = platform
   assert psp_path == None
   assert game_dir == None
+  assert title == None
   assert supported_api == None
 }
 
 pub fn psp_flash_flags_test() {
   let assert Ok(Flash(
-    platform: Psp(psp_path:, game_dir:, supported_api:),
+    platform: Psp(psp_path:, game_dir:, title:, supported_api:),
     help: False,
   )) =
     cli.parse([
@@ -362,11 +363,14 @@ pub fn psp_flash_flags_test() {
       "/tmp/ppsspp/PSP/GAME/ATOMVM",
       "--game-dir",
       "ATOMVM",
+      "--title",
+      "lucy_run",
       "--supported-api",
       "./api",
     ])
 
   assert psp_path == Some("/tmp/ppsspp/PSP/GAME/ATOMVM")
   assert game_dir == Some("ATOMVM")
+  assert title == Some("lucy_run")
   assert supported_api == Some("./api")
 }

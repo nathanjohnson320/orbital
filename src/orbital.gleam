@@ -169,6 +169,7 @@ pub fn main() -> Nil {
       list_images:,
       psp_path:,
       game_dir:,
+      title:,
       help: False,
     )) ->
       run_psp_install(psp_install.Options(
@@ -179,6 +180,7 @@ pub fn main() -> Nil {
         list_images:,
         psp_path:,
         game_dir:,
+        title:,
       ))
 
     Ok(cli.Expand(help: True, ..)) -> print_document(cli.expand_help_text(True))
@@ -245,8 +247,13 @@ fn flash(platform: cli.FlashPlatform) -> Nil {
       ))
       Ok(outcome)
     }
-    cli.Psp(psp_path:, game_dir:, supported_api: api) -> {
-      use _ <- result.try(do_flash_psp(psp_path:, game_dir:, supported_api: api))
+    cli.Psp(psp_path:, game_dir:, title:, supported_api: api) -> {
+      use _ <- result.try(do_flash_psp(
+        psp_path:,
+        game_dir:,
+        title:,
+        supported_api: api,
+      ))
       Ok(True)
     }
   }
@@ -700,14 +707,23 @@ fn do_flash_esp32(
 fn do_flash_psp(
   psp_path psp_path: Option(String),
   game_dir game_dir: Option(String),
+  title title: Option(String),
   supported_api supported_api: Option(String),
 ) -> Result(Nil, Error) {
+  use project <- result.try(
+    project.load()
+    |> result.map_error(CannotIdentifyProject),
+  )
+  let pbp_title = option.unwrap(title, project.name)
   let outcome = {
     use directory <- temporary.create(temporary.directory())
     let avm_path = filepath.join(directory, "build.avm")
     use _ <- result.try(do_build(Some(avm_path), supported_api))
     use Nil <- try_step("Copying app.avm onto the PSP game folder...", fn() {
-      psp.flash_avm(avm_path, psp.FlashOptions(psp_path:, game_dir:))
+      psp.flash_avm(
+        avm_path,
+        psp.FlashOptions(psp_path:, game_dir:, title: Some(pbp_title)),
+      )
       |> result.replace(Nil)
       |> result.map_error(PspError)
     })

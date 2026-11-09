@@ -1,6 +1,7 @@
 import gleam/option.{None, Some}
 import gleeunit
 import orbital/internal/psp
+import orbital/internal/psp_pbp
 import simplifile
 
 pub fn main() -> Nil {
@@ -42,7 +43,7 @@ pub fn install_and_flash_roundtrip_test() {
   let assert Ok(game_path) =
     psp.install_eboot(
       eboot_src,
-      psp.InstallOptions(psp_path: Some(stick), game_dir: None),
+      psp.InstallOptions(psp_path: Some(stick), game_dir: None, title: None),
     )
   assert game_path == stick <> "/PSP/GAME/ATOMVM"
   let assert Ok(True) = simplifile.is_file(game_path <> "/EBOOT.PBP")
@@ -50,7 +51,7 @@ pub fn install_and_flash_roundtrip_test() {
   let assert Ok(dest) =
     psp.flash_avm(
       avm_src,
-      psp.FlashOptions(psp_path: Some(game_path), game_dir: None),
+      psp.FlashOptions(psp_path: Some(game_path), game_dir: None, title: None),
     )
   assert dest == game_path <> "/app.avm"
   let assert Ok(True) = simplifile.is_file(dest)
@@ -69,7 +70,11 @@ pub fn flash_requires_eboot_test() {
   let assert Error(psp.EbootMissing(_)) =
     psp.flash_avm(
       avm_src,
-      psp.FlashOptions(psp_path: Some(game), game_dir: Some("ATOMVM")),
+      psp.FlashOptions(
+        psp_path: Some(game),
+        game_dir: Some("ATOMVM"),
+        title: None,
+      ),
     )
 }
 
@@ -77,4 +82,27 @@ pub fn resolve_game_path_uses_override_test() {
   let assert Ok(path) =
     psp.resolve_game_path(Some("/tmp/stick"), Some("ATOMVM"))
   assert path == "/tmp/stick/PSP/GAME/ATOMVM"
+}
+
+pub fn install_patches_eboot_title_test() {
+  let stick = "build/psp-title-stick"
+  let assert Ok(_) = simplifile.create_directory_all(stick)
+  let eboot_src = "build/psp-title-src.PBP"
+  let assert Ok(_) =
+    simplifile.write_bits(
+      eboot_src,
+      psp_pbp.test_fixture_pbp("AtomVM-PSP", 0x80),
+    )
+
+  let assert Ok(game_path) =
+    psp.install_eboot(
+      eboot_src,
+      psp.InstallOptions(
+        psp_path: Some(stick),
+        game_dir: None,
+        title: Some("lucy_run"),
+      ),
+    )
+  let assert Ok(bits) = simplifile.read_bits(game_path <> "/EBOOT.PBP")
+  let assert Ok("lucy_run") = psp_pbp.read_title(bits)
 }

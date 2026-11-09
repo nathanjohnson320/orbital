@@ -74,6 +74,7 @@ pub type Command {
     list_images: Bool,
     psp_path: Option(String),
     game_dir: Option(String),
+    title: Option(String),
     help: Bool,
   )
   Expand(port: Option(String), help: Bool)
@@ -119,6 +120,7 @@ pub type FlashPlatform {
   Psp(
     psp_path: Option(String),
     game_dir: Option(String),
+    title: Option(String),
     supported_api: Option(String),
   )
 }
@@ -280,6 +282,7 @@ pub fn parse(args: List(String)) -> Result(Command, Error) {
             platform: Psp(
               psp_path: option.from_result(find_flag_value(flags, "psp-path")),
               game_dir: option.from_result(find_flag_value(flags, "game-dir")),
+              title: option.from_result(find_flag_value(flags, "title")),
               supported_api: option.from_result(find_flag_value(
                 flags,
                 "supported-api",
@@ -526,6 +529,7 @@ pub fn parse(args: List(String)) -> Result(Command, Error) {
             list_images: False,
             psp_path: None,
             game_dir: None,
+            title: None,
             help: True,
           ))
         False -> {
@@ -548,6 +552,7 @@ pub fn parse(args: List(String)) -> Result(Command, Error) {
             list_images:,
             psp_path: option.from_result(find_flag_value(flags, "psp-path")),
             game_dir: option.from_result(find_flag_value(flags, "game-dir")),
+            title: option.from_result(find_flag_value(flags, "title")),
             help: False,
           ))
         }
@@ -791,6 +796,7 @@ fn psp_flash_flags() -> ValidatedFlagSpecs {
     hoist.validate_flag_specs([
       hoist.new_flag("psp-path"),
       hoist.new_flag("game-dir"),
+      hoist.new_flag("title"),
       hoist.new_flag("supported-api"),
       hoist.new_flag("help")
         |> hoist.with_short_alias("h")
@@ -909,6 +915,7 @@ fn psp_install_flags() -> ValidatedFlagSpecs {
         |> hoist.as_toggle,
       hoist.new_flag("psp-path"),
       hoist.new_flag("game-dir"),
+      hoist.new_flag("title"),
       hoist.new_flag("help")
         |> hoist.with_short_alias("h")
         |> hoist.as_toggle,
@@ -1493,6 +1500,11 @@ pub fn flash_help_text(description: Bool) -> Document {
       "PSP/GAME/<NAME> folder (must match ms0 hardcoded ATOMVM)",
       "ATOMVM",
     ),
+    doc.line,
+    flag_line(
+      "    --title        <NAME>  ",
+      "EBOOT PARAM.SFO TITLE (default: gleam.toml package name)",
+    ),
     doc.lines(2),
     doc.from_string(ansi.magenta("Other flags:")),
     doc.line,
@@ -1922,6 +1934,11 @@ pub fn install_help_text(description: Bool) -> Document {
       "    --game-dir        <NAME>       ",
       "PSP/GAME/<NAME> folder name",
       "ATOMVM",
+    ),
+    doc.line,
+    flag_line(
+      "    --title           <NAME>       ",
+      "EBOOT PARAM.SFO TITLE (default: gleam.toml package name when present)",
     ),
     doc.lines(2),
     doc.from_string(ansi.magenta("Other flags:")),
